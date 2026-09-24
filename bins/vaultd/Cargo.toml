@@ -1,0 +1,31 @@
+[package]
+name = "vaultd"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "vaultd"
+path = "src/main.rs"
+
+[dependencies]
+vault-core = { workspace = true }
+vault-crypto = { workspace = true }
+vault-store = { workspace = true }
+vault-fs = { workspace = true }
+vault-admin = { workspace = true }
+vault-index = { workspace = true }
+vault-audit = { workspace = true }
+vault-sync = { workspace = true }
+vault-client = { workspace = true }
+vault-webui = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+getrandom = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "=3.14.0"

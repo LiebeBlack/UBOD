@@ -1,0 +1,23 @@
+[package]
+name = "vault-gui-bin"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "vault-gui"
+path = "src/main.rs"
+
+[dependencies]
+vault-core = { workspace = true }
+vault-crypto = { workspace = true }
+vault-store = { workspace = true }
+vault-fs = { workspace = true }
+vault-admin = { workspace = true }
+vault-index = { workspace = true }
+vault-audit = { workspace = true }
+vault-roles = { workspace = true }
+vault-crash = { workspace = true }
+vault-gui = { workspace = true }
+eframe = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

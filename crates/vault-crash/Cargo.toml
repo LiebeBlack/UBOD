@@ -1,0 +1,22 @@
+[package]
+name = "vault-crash"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vault-core = { workspace = true }
+vault-crypto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+p256 = { workspace = true }
+chacha20poly1305 = { workspace = true }
+sha2 = { workspace = true }
+rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { workspace = true }
+
+[dev-dependencies]
+tempfile = "=3.14.0"

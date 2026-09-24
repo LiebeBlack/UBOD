@@ -1,0 +1,19 @@
+[package]
+name = "vault-store"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vault-core = { workspace = true }
+vault-crypto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+getrandom = { workspace = true }
+time = { workspace = true }
+sha2 = { workspace = true, features = ["oid"] }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = "=3.14.0"
