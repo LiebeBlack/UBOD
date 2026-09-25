@@ -259,13 +259,11 @@ impl Vault {
                 tracing::error!("canal de sincronización detenido: {e}");
             }
         });
+        // Si el canal no llega a escuchar (PKI inválida, puerto ocupado) se falla
+        // aquí con un error explícito, nunca en un bucle silencioso.
         let addr = match tokio::time::timeout(Self::SYNC_START_TIMEOUT, rx).await {
             Ok(Ok(addr)) => addr,
-            Ok(Err(_)) => {
-                return Err(DaemonError::Config(
-                    "el canal mTLS no pudo escuchar: revise la PKI".into(),
-                ))
-            }
+            Ok(Err(_)) => return Err(DaemonError::Config("PKI del canal no válida".into())),
             Err(_) => return Err(DaemonError::Config("el canal mTLS no arrancó".into())),
         };
 

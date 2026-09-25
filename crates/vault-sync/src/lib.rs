@@ -125,7 +125,9 @@ pub fn crypto_provider() -> Arc<rustls::crypto::CryptoProvider> {
             // Si otro hilo ganó la carrera, se respeta el ya instalado. El
             // respaldo mantiene el mismo proveedor aunque la instalación falle.
             let _ = provider.install_default();
-            rustls::crypto::CryptoProvider::get_default().cloned().unwrap_or(candidato)
+            rustls::crypto::CryptoProvider::get_default()
+                .cloned()
+                .unwrap_or(candidato)
         })
         .clone()
 }
@@ -269,7 +271,10 @@ mod tests {
     fn crypto_provider_is_installed_once() {
         let a = crypto_provider();
         let b = crypto_provider();
-        assert!(Arc::ptr_eq(&a, &b), "el proveedor se reutiliza, no se recrea");
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "el proveedor se reutiliza, no se recrea"
+        );
         assert!(
             rustls::crypto::CryptoProvider::get_default().is_some(),
             "el proveedor predeterminado debe quedar instalado"
