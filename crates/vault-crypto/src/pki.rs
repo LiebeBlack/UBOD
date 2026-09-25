@@ -88,16 +88,7 @@ impl Identity {
     /// Genera el certificado autofirmado de la CA (perfil raíz).
     pub fn self_sign_ca(mut self, cn: &str, days: u32) -> Result<Self, PkiError> {
         let vk = self.signing_key.verifying_key().to_owned();
-        let cert = build_cert(
-            cn,
-            cn,
-            vk,
-            &self.signing_key,
-            true,
-            days,
-            &EMPTY_EKU,
-            None,
-        )?;
+        let cert = build_cert(cn, cn, vk, &self.signing_key, true, days, &EMPTY_EKU, None)?;
         self.cert_der = cert.to_der()?;
         Ok(self)
     }
