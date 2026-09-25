@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ficha Técnica — Bóveda Académica</title>
+<meta name="description" content="Especificación técnica oficial del Sistema Integral de Bóveda: componentes, ejecutables, bibliotecas Rust, protocolo mTLS 1.3, formatos indexables y comandos.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2338bdf8'><path d='M12 2.2 4.6 5.1v6.2c0 4.6 3 8.6 7.4 10.5 4.4-1.9 7.4-5.9 7.4-10.5V5.1L12 2.2Z'/></svg>">
+<link rel="stylesheet" href="estilos.css">
+<script defer src="interactivo.js"></script>
+</head>
+<body>
+
+<!-- ===================== ENCABEZADO / NAVEGACIÓN ===================== -->
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="Bóveda Académica Inicio">
+      <div class="brand-icon-wrap">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2.2 4.6 5.1v6.2c0 4.6 3 8.6 7.4 10.5 4.4-1.9 7.4-5.9 7.4-10.5V5.1L12 2.2Z"/>
+          <circle cx="12" cy="10.5" r="2.2" fill="#38bdf8"/>
+          <path d="M12 12.7v3.8"/>
+        </svg>
+      </div>
+      <div class="brand-title">
+        <span>Bóveda Académica</span>
+        <span class="brand-sub">Custodia documental institucional</span>
+      </div>
+    </a>
+
+    <button class="mobile-toggle" aria-label="Abrir menú de navegación" aria-expanded="false">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+      </svg>
+    </button>
+
+    <nav class="nav" aria-label="Navegación principal">
+      <a href="index.html#flujo">Flujo</a>
+      <a href="index.html#simulador">Simulador</a>
+      <a href="index.html#capacidades">Capacidades</a>
+      <a href="index.html#roles">Roles</a>
+      <a href="index.html#seguridad">Seguridad</a>
+      <a href="index.html#despliegue">Despliegue</a>
+      <a href="ficha-tecnica.html" aria-current="page">Ficha técnica</a>
+      <a class="nav-cta" href="index.html#contacto">Solicitar demo</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ===================== HERO DE FICHA TÉCNICA ===================== -->
+<section class="hero" style="padding:70px 0 40px;">
+  <div class="wrap">
+    <div class="status-badge">
+      <span class="pulse-dot"></span>
+      <span>Especificación Técnica Verificable · Pila Rust 100%</span>
+    </div>
+    <h1 style="font-size:clamp(1.9rem, 3.8vw, 2.8rem);">Componentes, protocolo y estructura interna del sistema</h1>
+    <p class="lead" style="max-width:76ch;">
+      Desglose exhaustivo de la arquitectura de Bóveda Académica: tres ejecutables dedicados, doce bibliotecas internas modulares en Rust, proveedor criptográfico nativo y escenario de despliegue en host Linux único sin dependencias en la nube.
+    </p>
+
+    <div class="kpis-grid" style="margin-top:28px;">
+      <div class="kpi-card">
+        <b>3</b>
+        <span>Ejecutables de Alto Desempeño</span>
+      </div>
+      <div class="kpi-card">
+        <b>12</b>
+        <span>Módulos de Biblioteca Interna</span>
+      </div>
+      <div class="kpi-card">
+        <b>mTLS 1.3</b>
+        <span>Canal con Curva Elíptica P-256</span>
+      </div>
+      <div class="kpi-card">
+        <b>0 Nube</b>
+        <span>Soberanía en Host Local</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== EJECUTABLES ===================== -->
+<section class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Binarios compilados</p>
+    <h2>Ejecutables del Sistema</h2>
+    <p class="lead" style="max-width:70ch;">
+      Binarios compilados nativamente en Rust sin requerir máquina virtual, runtime de scripting ni bibliotecas externas C heredadas.
+    </p>
+
+    <div class="scroll-wrap" style="margin-top:20px;">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Binario</th>
+            <th>Función Principal</th>
+            <th>Garantías Operativas</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>vault-gui</code></td>
+            <td>Aplicación gráfica de escritorio para gestión diaria, búsqueda, consulta de auditoría y papelera.</td>
+            <td>Interfaz acelerada por GPU (OpenGL/Wayland/X11), 100% ventanas sin necesidad de consola de comandos. Confinamiento de escritura en Linux.</td>
+          </tr>
+          <tr>
+            <td><code>vaultd</code></td>
+            <td>Demonio de servicio central: motor de la bóveda, panel web local (HTTP loopback), servidor mTLS y anuncio mDNS.</td>
+            <td>Auto-restringido mediante Landlock. Bloqueo atómico de escritor único.</td>
+          </tr>
+          <tr>
+            <td><code>vaultctl</code></td>
+            <td>Cliente de consola: descubrimiento en red local, emparejamiento con código OTP, consulta de manifiestos y subida de archivos.</td>
+            <td>Ideal para automatizaciones, terminales de cátedra o digitalizadores desatendidos.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BIBLIOTECAS INTERNAS ===================== -->
+<section class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Arquitectura modular</p>
+    <h2>Bibliotecas Internas de Rust</h2>
+    <p class="lead" style="max-width:72ch;">
+      Separación estricta de responsabilidades por módulos autocontenidos y testeables de manera unitaria:
+    </p>
+
+    <div class="scroll-wrap" style="margin-top:20px;">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Componente</th>
+            <th>Responsabilidad Funcional</th>
+            <th>Detalle Criptográfico / Técnico</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>vault-core</code></td>
+            <td>Modelo de dominio institucional</td>
+            <td>Documentos, versiones inmutables, categorías académicas y serialización del envelope de transferencia.</td>
+          </tr>
+          <tr>
+            <td><code>vault-crypto</code></td>
+            <td>Primitivas de seguridad de vanguardia</td>
+            <td>SHA-256, BLAKE3, AEAD XChaCha20-Poly1305, curvas P-256 y sellador de tiempo compatible con RFC&nbsp;3161.</td>
+          </tr>
+          <tr>
+            <td><code>vault-store</code></td>
+            <td>Almacenamiento de metadatos cifrados</td>
+            <td>Base de metadatos protegida por bloques autenticados con exclusión mutua para escritor único.</td>
+          </tr>
+          <tr>
+            <td><code>vault-fs</code></td>
+            <td>Gestión del sistema de archivos</td>
+            <td>Inmutabilidad física de archivos (<code>chattr +i</code>), directorio staging de cuarentena y confinamiento con Landlock.</td>
+          </tr>
+          <tr>
+            <td><code>vault-admin</code></td>
+            <td>Servicio de administración institucional</td>
+            <td>Control de PIN con Argon2id, bloqueo progresivo por intentos fallidos, admisión en bóveda y protocolo de doble PIN para destrucción.</td>
+          </tr>
+          <tr>
+            <td><code>vault-index</code></td>
+            <td>Clasificación y motor de búsqueda</td>
+            <td>Indexación compuesta por metadatos, extracción de texto completo y motor de OCR para digitalizaciones.</td>
+          </tr>
+          <tr>
+            <td><code>vault-audit</code></td>
+            <td>Verificación y cadena de bloques</td>
+            <td>Barridos de integridad periódicos anti bit-rot, registro de divergencias y encadenamiento criptográfico estricto.</td>
+          </tr>
+          <tr>
+            <td><code>vault-roles</code></td>
+            <td>Control de acceso basado en roles (RBAC)</td>
+            <td>Validación rigurosa de privilegios mínimos por acción, control de versionado y emisión de firmas en auditoría.</td>
+          </tr>
+          <tr>
+            <td><code>vault-sync</code></td>
+            <td>Canal de red de dispositivos</td>
+            <td>Servidor mTLS 1.3, cliente TLS, autoridad de certificación (CA) interna y resolución mDNS opcional.</td>
+          </tr>
+          <tr>
+            <td><code>vault-client</code></td>
+            <td>Lado emisor / terminal</td>
+            <td>Emparejamiento de un solo uso (OTP), empaquetado del envelope y transmisión blindada al daemon.</td>
+          </tr>
+          <tr>
+            <td><code>vault-webui</code></td>
+            <td>Panel web institucional local</td>
+            <td>Servido en loopback <code>127.0.0.1:8443</code> con HTTP sobre sockets nativos Rust y autenticación por PIN.</td>
+          </tr>
+          <tr>
+            <td><code>vault-crash</code></td>
+            <td>Diagnósticos y reportes cifrados</td>
+            <td>Reportes de fallos con backtrace y estado del sistema cifrados a la clave pública institucional con ECIES P-256.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== STACK TECNOLÓGICO ===================== -->
+<section class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Pila de software</p>
+    <h2>Pila Tecnológica y Primitivas Criptográficas</h2>
+
+    <div class="grid grid-2" style="margin-top:24px;">
+      <div class="card">
+        <h3>Seguridad &amp; Criptografía</h3>
+        <ul style="padding-left:1.2em;margin:0;" class="mut">
+          <li><strong>TLS 1.3 puro:</strong> Implementado con <code>rustls</code>. Sin OpenSSL, sin dependencias dinámicas C ni superficie de ataque heredada.</li>
+          <li><strong>PKI Interna P-256:</strong> Autoridad Certificadora (CA) propia en curva P-256; emisión de certificados de cliente tras emparejamiento válido.</li>
+          <li><strong>Cifrado AEAD:</strong> XChaCha20-Poly1305 para la base de metadatos, asociando la posición de bloque como dato autenticado (AAD).</li>
+          <li><strong>Hashing &amp; Derivación:</strong> SHA-256 + BLAKE3 para el contenido; Argon2id para PIN de acceso.</li>
+          <li><strong>Estampado Temporal:</strong> Tokens RFC 3161 con ASN.1 DER y firmas criptográficas verificables.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Plataforma &amp; Ejecución</h3>
+        <ul style="padding-left:1.2em;margin:0;" class="mut">
+          <li><strong>Runtime Asíncrono:</strong> <code>tokio</code> para alta concurrencia y gestión eficiente de I/O en el canal mTLS.</li>
+          <li><strong>Interfaz Gráfica:</strong> <code>egui / eframe</code> con renderizado por hardware OpenGL/Wayland/X11 y selector de archivos embebido.</li>
+          <li><strong>Procesamiento Documental:</strong> <code>lopdf</code> para PDF nativo y descompresor ZIP para contenedores OOXML/ODF.</li>
+          <li><strong>Sandboxing:</strong> Confinamiento de sistema mediante <code>Landlock</code> en núcleos Linux modernos.</li>
+          <li><strong>Configuración:</strong> Formato TOML seguro con validación estricta de esquemas mediante <code>serde</code>.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PROTOCOLO DEL CANAL ===================== -->
+<section class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Protocolo de red</p>
+    <h2>Protocolo del Canal mTLS de Dispositivos</h2>
+    <p class="lead" style="max-width:70ch;">
+      Los terminales de cátedra y estaciones de digitalización se comunican mediante endpoints HTTPS/mTLS autenticados:
+    </p>
+
+    <div class="scroll-wrap" style="margin-top:20px;">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Endpoint</th>
+            <th>Método</th>
+            <th>Autenticación</th>
+            <th>Carga Útil / Respuesta</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>/v1/pair</code></td>
+            <td>POST</td>
+            <td>Código OTP de 1 solo uso (10 min)</td>
+            <td>Envía <code>{code, device_id}</code> &rarr; Devuelve certificado y clave de cliente con huella SHA-256 firmada.</td>
+          </tr>
+          <tr>
+            <td><code>/v1/ping</code></td>
+            <td>GET</td>
+            <td>mTLS con certificado autorizado</td>
+            <td>Verificación de estado de bóveda, capacidad y versión de protocolo activa.</td>
+          </tr>
+          <tr>
+            <td><code>/v1/manifest</code></td>
+            <td>GET</td>
+            <td>mTLS con certificado autorizado</td>
+            <td>Lista de hashes SHA-256 presentes en la bóveda (prevención de reenvíos innecesarios).</td>
+          </tr>
+          <tr>
+            <td><code>/v1/upload</code></td>
+            <td>POST</td>
+            <td>mTLS con certificado autorizado</td>
+            <td>Envelope JSON de metadatos en la primera línea + flujo binario del documento.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid grid-2" style="margin-top:24px;">
+      <div class="card">
+        <h3>Estructura del Envelope JSON</h3>
+        <p class="mut" style="font-size:0.88rem;margin-bottom:8px;">
+          Cada entrega declara metadatos que la bóveda recalcula y verifica antes de admitir:
+        </p>
+        <div class="code-box">
+          <pre><code>{
+  "header": {
+    "device_id": "term-catedra-02",
+    "timestamp_utc": 1758816400,
+    "protocol_version": "1.0"
+  },
+  "payload": {
+    "file_name": "Tesis_Postgrado_2026.pdf",
+    "file_category": "Tesis",
+    "file_size_bytes": 14205840,
+    "sha256": "e3b0c44298fc1c149afbf4c8...",
+    "title": "Criptografía Aplicada a Datos",
+    "department": "Ciencias de la Computación",
+    "academic_year": 2026
+  }
+}</code></pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Garantías del Canal Seguro</h3>
+        <ul style="padding-left:1.2em;margin:0;" class="mut">
+          <li><strong>Emparejamiento Efímero:</strong> Código OTP con caducidad improrrogable de 10 minutos.</li>
+          <li><strong>Filtro por Huella Criptográfica:</strong> Cada solicitud valida la huella digital del certificado contra la base local de dispositivos aprobados.</li>
+          <li><strong>Aislamiento de Carga:</strong> Todo envío se deposita en staging; no alcanza la bóveda final hasta su admisión formal.</li>
+          <li><strong>Límites Estrictos de Conexión:</strong> Timeouts contra conexiones lentas o colgadas y descarte inmediato ante excesos de tamaño.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DATOS EN DISCO ===================== -->
+<section class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Almacenamiento físico</p>
+    <h2>Estructura de Datos en Disco</h2>
+    <p class="lead" style="max-width:72ch;">
+      Directorio por defecto en despliegue estándar: <code>/opt/intranet-suite/data/</code> (o <code>~/.boveda/</code> para despliegue de usuario):
+    </p>
+
+    <div class="scroll-wrap" style="margin-top:20px;">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Ruta de Archivo / Directorio</th>
+            <th>Contenido &amp; Tratamiento de Seguridad</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>vault.key</code></td>
+            <td>Clave maestra criptográfica de 64 bytes generada con CSPRNG del kernel. Permisos <code>0600</code>. Sin ella la base es irrecuperable.</td>
+          </tr>
+          <tr>
+            <td><code>db/vault.db.enc</code></td>
+            <td>Base de metadatos, índices catalográficos e historial de versiones, protegida con cifrado XChaCha20-Poly1305.</td>
+          </tr>
+          <tr>
+            <td><code>pki/</code>, <code>tsa/</code>, <code>ca.pem</code></td>
+            <td>Autoridad de Certificación local y sellador temporal cualificado. El certificado público de CA se entrega en el emparejamiento.</td>
+          </tr>
+          <tr>
+            <td><code>config/vault.pub</code></td>
+            <td>Clave pública institucional de verificación y cifrado de reportes de diagnóstico.</td>
+          </tr>
+          <tr>
+            <td><code>config/rules.toml</code></td>
+            <td>Reglas de clasificación automática según taxonomía institucional y patrones de archivo.</td>
+          </tr>
+          <tr>
+            <td><code>vault/</code></td>
+            <td>Documentos custodiados admitidos: sellados con doble hash, marcados inmutables (<code>chattr +i</code>) e indexados para búsqueda.</td>
+          </tr>
+          <tr>
+            <td><code>staging/</code></td>
+            <td>Directorio de cuarentena transitoria donde se verifican las cargas entrantes antes de su sellado definitivo.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== COMANDOS PRINCIPALES ===================== -->
+<section class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Referencia operativa</p>
+    <h2>Comandos y Sintaxis de Uso</h2>
+
+    <div class="grid grid-2" style="margin-top:24px;">
+      <div class="card">
+        <h3>Servicio Central (<code>vaultd</code>)</h3>
+        <div class="code-box">
+          <button class="copy-btn">Copiar</button>
+          <pre><code># Inicialización guiada y arranque inmediato
+vaultd --quickstart MiClaveSegura2026
+
+# Configuración única de PIN de acceso
+vaultd --init MiClaveSegura2026
+
+# Arranque ordinario del demonio y panel web
+vaultd
+
+# Modo depuración sin confinamiento Landlock
+vaultd --no-landlock</code></pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Cliente de Terminal (<code>vaultctl</code>)</h3>
+        <div class="code-box">
+          <button class="copy-btn">Copiar</button>
+          <pre><code># Descubrir servicios de bóveda en red local
+vaultctl discover
+
+# Emparejar terminal con código OTP de 10 min
+vaultctl pair 127.0.0.1:8642 984120 term-01 --ca ca.pem
+
+# Subir documento con envelope de metadatos
+vaultctl upload 127.0.0.1:8642 acta_2026.pdf --categoria Acta
+
+# Comprobar estado de conectividad mTLS
+vaultctl ping 127.0.0.1:8642</code></pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Aplicación de Escritorio (<code>vault-gui</code>)</h3>
+        <div class="code-box">
+          <button class="copy-btn">Copiar</button>
+          <pre><code># Lanzar interfaz gráfica nativa en Rust
+vault-gui
+
+# Lanzar sin restricción de sandbox de escritura
+vault-gui --no-landlock</code></pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Instalación Institucional Portable</h3>
+        <div class="code-box">
+          <button class="copy-btn">Copiar</button>
+          <pre><code># Despliegue en /opt y creación de lanzador de escritorio
+sudo ./scripts/install-portable.sh --desktop
+
+# Desinstalación limpia sin dejar residuos
+sudo ./scripts/uninstall-portable.sh</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== LÍMITES Y ALCANCE ===================== -->
+<section class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Especificación de límites</p>
+    <h2>Alcance Técnico y Límites de Diseño</h2>
+
+    <div class="grid grid-2" style="margin-top:24px;">
+      <div class="card">
+        <h3>Alcance Garantizado</h3>
+        <ul style="padding-left:1.2em;margin:0;" class="mut">
+          <li><strong>Host Linux Dedicado:</strong> Diseñado para operar con máxima seguridad en un equipo institucional independiente.</li>
+          <li><strong>Loopback por Defecto:</strong> Panel de control (puerto 8443) y canal mTLS (puerto 8642) escuchan en <code>127.0.0.1</code> por defecto.</li>
+          <li><strong>Descubrimiento Local Controlado:</strong> Soporte de mDNS para red de cátedra, configurable y deshabilitado por omisión.</li>
+          <li><strong>Trazabilidad Universal:</strong> Cada alteración, admisión o versionado deja constancia en la cadena de auditoría criptográfica.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Límites Operativos</h3>
+        <ul style="padding-left:1.2em;margin:0;" class="mut">
+          <li><strong>Escritor Único:</strong> Un solo proceso puede escribir en la base simultáneamente para evitar desincronizaciones de base de datos.</li>
+          <li><strong>Requisitos del Filesystem:</strong> El atributo inmutable (<code>chattr +i</code>) requiere soporte en el sistema de archivos (ext4, XFS, Btrfs).</li>
+          <li><strong>Herramientas Externas para OCR:</strong> La extracción en imágenes escaneadas requiere <code>tesseract-ocr</code> instalado.</li>
+          <li><strong>Continuidad Institucional:</strong> La recuperación ante desastres recae en la custodia física y respaldo periódico del archivo <code>vault.key</code>.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PIE DE PÁGINA ===================== -->
+<footer>
+  <div class="wrap">
+    <div class="footer-cols">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <div class="brand-icon-wrap" style="width:32px;height:32px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M12 2.2 4.6 5.1v6.2c0 4.6 3 8.6 7.4 10.5 4.4-1.9 7.4-5.9 7.4-10.5V5.1L12 2.2Z"/></svg>
+          </div>
+          <strong style="margin:0;font-size:1.05rem;">Bóveda Académica</strong>
+        </div>
+        <p class="mut" style="font-size:0.88rem;line-height:1.6;">
+          Ficha técnica oficial de componentes, protocolo y arquitectura del Sistema Integral de Bóveda.
+        </p>
+      </div>
+
+      <div>
+        <strong>Enlaces Rápidos</strong>
+        <ul class="footer-links">
+          <li><a href="index.html">Página Principal</a></li>
+          <li><a href="index.html#flujo">Flujo Criptográfico en 5 Capas</a></li>
+          <li><a href="index.html#simulador">Simulador de Integridad</a></li>
+          <li><a href="index.html#contacto">Solicitar Demostración Guiada</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <strong>Integridad Criptográfica</strong>
+        <p class="mut" style="font-size:0.88rem;line-height:1.6;">
+          Diseñado para instituciones de educación superior e investigación que requieren evidencia incontrovertible y cadena de custodia demostrable.
+        </p>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; Bóveda Académica. Documentación Técnica v1.0.0.</span>
+      <span style="font-family:ui-monospace,monospace;color:var(--text-muted);">Pila Criptográfica Rust · mTLS 1.3 · RFC 3161 · WORM</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

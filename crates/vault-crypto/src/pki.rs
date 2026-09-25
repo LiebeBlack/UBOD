@@ -13,9 +13,7 @@ use rand_core::OsRng;
 use std::path::Path;
 use x509_cert::builder::{Builder, CertificateBuilder, Profile};
 use x509_cert::ext::pkix::name::{GeneralName, GeneralNames};
-use x509_cert::ext::pkix::{
-    BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages, SubjectAltName,
-};
+use x509_cert::ext::pkix::{ExtendedKeyUsage, SubjectAltName};
 use x509_cert::name::{Name, RdnSequence, RelativeDistinguishedName};
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::time::Validity;
@@ -97,7 +95,6 @@ impl Identity {
             &self.signing_key,
             true,
             days,
-            &[ca_key_usage()],
             &EMPTY_EKU,
             None,
         )?;
@@ -140,7 +137,6 @@ impl Identity {
             &self.signing_key,
             false,
             days,
-            &[leaf_key_usage()],
             &eku,
             san,
         )?;
@@ -153,14 +149,6 @@ const OID_SERVER_AUTH: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.
 
 static EMPTY_EKU: std::sync::LazyLock<ExtendedKeyUsage> =
     std::sync::LazyLock::new(|| ExtendedKeyUsage(Vec::new()));
-
-fn ca_key_usage() -> KeyUsage {
-    KeyUsage::from(KeyUsages::DigitalSignature | KeyUsages::KeyCertSign | KeyUsages::CRLSign)
-}
-
-fn leaf_key_usage() -> KeyUsage {
-    KeyUsage::from(KeyUsages::DigitalSignature | KeyUsages::KeyEncipherment)
-}
 
 /// Codifica un certificado DER como PEM.
 pub fn pem_encode_cert(der: &[u8]) -> String {
@@ -268,7 +256,7 @@ pub fn spki_bytes(cert: &Certificate) -> Result<Vec<u8>, PkiError> {
         .map_err(PkiError::from)
 }
 
-#[allow(clippy::too_many_arguments)] // perfil completo de X.509: los 9 campos son necesarios
+#[allow(clippy::too_many_arguments)] // perfil completo de X.509: los 8 campos son necesarios
 fn build_cert(
     subject_cn: &str,
     issuer_cn: &str,
@@ -276,7 +264,6 @@ fn build_cert(
     signer: &SigningKey,
     is_ca: bool,
     days: u32,
-    key_usages: &[KeyUsage],
     ekus: &ExtendedKeyUsage,
     san: Option<Vec<GeneralName>>,
 ) -> Result<Certificate, PkiError> {
@@ -302,17 +289,14 @@ fn build_cert(
     let mut builder = CertificateBuilder::new(profile, serial, validity, subject, spki, signer)
         .map_err(|_| PkiError::Invalid)?;
 
-    if is_ca {
-        builder
-            .add_extension(&BasicConstraints {
-                ca: true,
-                path_len_constraint: Some(0),
-            })
-            .map_err(|_| PkiError::Invalid)?;
-    }
-    for ku in key_usages {
-        builder.add_extension(ku).map_err(|_| PkiError::Invalid)?;
-    }
+    // Las extensiones base (SKI, AKI, BasicConstraints y KeyUsage) YA las emite
+    // el perfil del builder (`Profile::Root`/`Profile::Leaf`): añadirlas aquí de
+    // nuevo las duplica en el DER y webpki rechaza el certificado con
+    // `ExtensionValueInvalid` (RFC 5280 §4.2: cada extensión como máximo una
+    // vez). Ese rechazo mataba el arranque del servidor mTLS en
+    // `RootCertStore::add` antes de escuchar, y los E2E fallaban con
+    // «el servidor debe publicar su dirección: RecvError». Aquí sólo se añaden
+    // las extensiones que el perfil NO emite: EKU y SAN.
     if !ekus.0.is_empty() {
         builder.add_extension(ekus).map_err(|_| PkiError::Invalid)?;
     }
@@ -373,6 +357,58 @@ mod tests {
         let vk = id.verifying_key();
         assert!(vk.verify(b"payload", &sig).is_ok());
         assert!(vk.verify(b"otro", &sig).is_err());
+    }
+
+    /// Regresión del fallo de CI («el servidor debe publicar su dirección:
+    /// RecvError»): las extensiones base se emitían DOS veces (una por el
+    /// perfil del builder y otra aquí a mano) y webpki rechaza cualquier
+    /// certificado con extensiones duplicadas (RFC 5280 §4.2), lo que mataba
+    /// el arranque del servidor mTLS antes de escuchar.
+    #[test]
+    fn generated_certificates_have_no_duplicate_extensions() {
+        fn extn_ids(cert: &Certificate) -> Vec<String> {
+            // `Extensions` es un alias de `Vec<Extension>` en x509-cert 0.2
+            cert.tbs_certificate
+                .extensions
+                .as_ref()
+                .map(|exts| exts.iter().map(|e| e.extn_id.to_string()).collect())
+                .unwrap_or_default()
+        }
+
+        let ca = Identity::generate()
+            .self_sign_ca("Boveda Root CA", 3650)
+            .unwrap();
+        let ca_cert = Certificate::from_der(&ca.cert_der).unwrap();
+        let ids = extn_ids(&ca_cert);
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "la CA no debe repetir extensiones: {ids:?}"
+        );
+
+        let dev = DeviceKeyPair::generate();
+        let leaf_der = ca
+            .sign_leaf_with_san(
+                "vault-server",
+                dev.verifying_key(),
+                true,
+                825,
+                Some(vec![san_dns("vault.local").unwrap()]),
+            )
+            .unwrap();
+        let leaf = Certificate::from_der(&leaf_der).unwrap();
+        let ids = extn_ids(&leaf);
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "el certificado de servidor no debe repetir extensiones: {ids:?}"
+        );
     }
 
     fn pem_encode(der: &[u8]) -> Vec<u8> {

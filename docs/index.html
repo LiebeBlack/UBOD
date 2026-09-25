@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bóveda Académica — Custodia Documental Institucional con Sellado Criptográfico</title>
+<meta name="description" content="Sistema integral de bóveda documental académica: sellado SHA-256 + BLAKE3 + RFC 3161, inmutabilidad física WORM, auditoría encadenada y canal mTLS. Se ejecuta en un solo equipo Linux, sin servidores externos.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2338bdf8'><path d='M12 2.2 4.6 5.1v6.2c0 4.6 3 8.6 7.4 10.5 4.4-1.9 7.4-5.9 7.4-10.5V5.1L12 2.2Z'/></svg>">
+<link rel="stylesheet" href="estilos.css">
+<script defer src="interactivo.js"></script>
+</head>
+<body>
+
+<!-- ===================== ENCABEZADO / NAVEGACIÓN ===================== -->
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="Bóveda Académica Inicio">
+      <div class="brand-icon-wrap">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2.2 4.6 5.1v6.2c0 4.6 3 8.6 7.4 10.5 4.4-1.9 7.4-5.9 7.4-10.5V5.1L12 2.2Z"/>
+          <circle cx="12" cy="10.5" r="2.2" fill="#38bdf8"/>
+          <path d="M12 12.7v3.8"/>
+        </svg>
+      </div>
+      <div class="brand-title">
+        <span>Bóveda Académica</span>
+        <span class="brand-sub">Custodia documental institucional</span>
+      </div>
+    </a>
+
+    <button class="mobile-toggle" aria-label="Abrir menú de navegación" aria-expanded="false">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+      </svg>
+    </button>
+
+    <nav class="nav" aria-label="Navegación principal">
+      <a href="#flujo">Flujo</a>
+      <a href="#simulador">Simulador</a>
+      <a href="#capacidades">Capacidades</a>
+      <a href="#roles">Roles</a>
+      <a href="#seguridad">Seguridad</a>
+      <a href="#despliegue">Despliegue</a>
+      <a href="ficha-tecnica.html">Ficha técnica</a>
+      <a class="nav-cta" href="#contacto">Solicitar demo</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ===================== HERO SECTION ===================== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-content">
+      <div class="status-badge">
+        <span class="pulse-dot"></span>
+        <span>Bóveda Activa · Cero Nube · Inmutabilidad Física WORM</span>
+      </div>
+      
+      <h1>La custodia documental de su institución, con <span class="text-gradient">integridad matemática</span></h1>
+      
+      <p class="lead">
+        Bóveda Académica recibe, clasifica, sella y custodia documentos académicos (tesis, actas de consejo, expedientes curriculares, proyectos de investigación) con evidencia verificable en el tiempo: doble hash del contenido, sellado de tiempo RFC&nbsp;3161, inmutabilidad física en disco y cadena de auditoría inalterable.
+      </p>
+
+      <p class="lead" style="font-size:1.02rem;color:var(--text-muted);">
+        Ejecución 100% soberana en <strong>un único equipo Linux institucional</strong>: sin nubes externas, sin suscripciones de terceros, sin privilegios root para operar y con total trazabilidad. La custodia permanece exclusivamente en su sede.
+      </p>
+
+      <ul class="badges-row">
+        <li class="badge">🦀 Rust puro · Sin OpenSSL</li>
+        <li class="badge">🔒 mTLS 1.3 con PKI propia</li>
+        <li class="badge">⛓️ Auditoría encadenada estricta</li>
+        <li class="badge">🛡️ Inmutabilidad WORM (chattr +i)</li>
+        <li class="badge">🔐 Cifrado XChaCha20-Poly1305</li>
+        <li class="badge">📦 Despliegue portable en 1 comando</li>
+      </ul>
+
+      <div class="actions">
+        <a class="btn btn-primary" href="#contacto">
+          <span>Solicitar demostración</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
+        <a class="btn btn-ghost" href="ficha-tecnica.html">
+          <span>Ver ficha técnica</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Hero Visual Preview: Certificado Interactivo -->
+    <div class="hero-visual">
+      <div class="security-card-preview">
+        <div class="card-header-status">
+          <div>
+            <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-muted);font-weight:600;letter-spacing:0.06em;">Registro de Custodia Activo</div>
+            <div style="font-size:1.08rem;font-weight:700;color:#fff;margin-top:2px;">Tesis_Doctoral_Bioinformatica_2026.pdf</div>
+          </div>
+          <span class="badge-verified">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Sellado Válido
+          </span>
+        </div>
+
+        <div class="cert-meta-item">
+          <span class="cert-meta-label">Categoría / Depto:</span>
+          <span class="cert-meta-val" style="color:#fff;">Tesis Doctoral · Dpto. Informática</span>
+        </div>
+        <div class="cert-meta-item">
+          <span class="cert-meta-label">Estampa Temporal:</span>
+          <span class="cert-meta-val">RFC 3161 (TSA P-256 Validada)</span>
+        </div>
+        <div class="cert-meta-item">
+          <span class="cert-meta-label">Estado en Disco:</span>
+          <span class="cert-meta-val" style="color:#6ee7b7;">WORM Inmutable (chattr +i)</span>
+        </div>
+
+        <div class="hash-pill">
+          <span class="lbl">SHA-256</span>
+          <span>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</span>
+        </div>
+
+        <div class="hash-pill" style="border-color:rgba(99, 102, 241, 0.25);">
+          <span class="lbl" style="color:#a5b4fc;">BLAKE3</span>
+          <span style="color:#c7d2fe;">af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262</span>
+        </div>
+
+        <div class="cert-meta-item" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+          <span class="cert-meta-label">Auditoría Encadenada:</span>
+          <span class="cert-meta-val" style="color:#93c5fd;">Bloque #4192 (Enlace Hash Criptográfico)</span>
+        </div>
+
+        <div class="card-tags">
+          <span class="mini-tag">Solo Lectura</span>
+          <span class="mini-tag">mTLS 1.3</span>
+          <span class="mini-tag">Landlock Confinado</span>
+          <span class="mini-tag">100% Auditable</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PROBLEMA & VALOR ===================== -->
+<section id="problema" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Seguridad de fondo documental</p>
+    <h2>Cuatro problemas críticos que una carpeta compartida jamás resuelve</h2>
+    <p class="lead" style="max-width:70ch;">
+      Los repositorios convencionales y carpetas de red sufren alteraciones silenciosas, sobrescrituras accidentales y carecen de valor probatorio ante auditorías de acreditación.
+    </p>
+
+    <div class="grid grid-4" style="margin-top:32px;">
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </div>
+        <h3>Integridad a largo plazo</h3>
+        <p class="mut">Los barridos automáticos comparan continuamente el contenido real custodiado contra el índice matemático, detectando y alertando de cualquier bit-rot o alteración física.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+        </div>
+        <h3>Cadena de custodia</h3>
+        <p class="mut">Cada documento se sella con doble hash (SHA-256 + BLAKE3), recibe una marca de tiempo cualificada RFC&nbsp;3161 y se fija físicamente como WORM inmutable en el disco.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+        </div>
+        <h3>Roles con mínimos privilegios</h3>
+        <p class="mut">Cuatro roles institucionales definidos: Docente, Administración, Coordinación y Dirección. Cada intervención genera rastro indeleble y ningún rol puede borrar unilateralmente.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+        </div>
+        <h3>Cero dependencia externa</h3>
+        <p class="mut">Sin bases de datos de terceros, sin contenedores engorrosos ni telemetría oculta. Un ejecutable autocontenido que se copia y funciona de inmediato en el equipo institucional.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FLUJO INTERACTIVO DE CUSTODIA ===================== -->
+<section id="flujo" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Arquitectura secuencial</p>
+    <h2>Flujo de custodia en cinco capas criptográficas</h2>
+    <p class="lead" style="max-width:72ch;">
+      Explore cómo un archivo institucional transita desde su recepción hasta el sellado final inmutable. Haga clic en cada fase para inspeccionar su mecanismo técnico y garantías:
+    </p>
+
+    <div class="pipeline-container">
+      <div class="pipeline-steps">
+        <button class="pipeline-step-btn active" data-step="1">
+          <span class="step-num">Fase 01</span>
+          <span class="step-name">Recepción &amp; Staging</span>
+        </button>
+        <button class="pipeline-step-btn" data-step="2">
+          <span class="step-num">Fase 02</span>
+          <span class="step-name">Doble Hashing</span>
+        </button>
+        <button class="pipeline-step-btn" data-step="3">
+          <span class="step-num">Fase 03</span>
+          <span class="step-name">Sello RFC 3161</span>
+        </button>
+        <button class="pipeline-step-btn" data-step="4">
+          <span class="step-num">Fase 04</span>
+          <span class="step-name">Bloqueo WORM</span>
+        </button>
+        <button class="pipeline-step-btn" data-step="5">
+          <span class="step-num">Fase 05</span>
+          <span class="step-name">Auditoría Hash</span>
+        </button>
+      </div>
+
+      <div class="pipeline-detail-box">
+        <div class="pipeline-detail-content">
+          <span id="pipeline-detail-tech" class="pipeline-tech-tag">Canal mTLS 1.3 · PKI P-256 · Envelope JSON</span>
+          <h4 id="pipeline-detail-title" style="margin-top:10px;">1. Admisión Segura &amp; Staging Aislado</h4>
+          <p id="pipeline-detail-desc">
+            Ningún archivo entra directo a la bóveda. Las entregas llegan mediante canal mTLS 1.3 cifrado a un área de recepción temporal ('staging'), donde se evalúa su envelope de metadatos y se calcula el hash para confirmar que no hubo alteración en tránsito.
+          </p>
+        </div>
+        <div class="code-box">
+          <pre><code id="pipeline-detail-code">POST /v1/upload
+Content-Type: application/octet-stream
+X-Envelope: { "device_id": "term-04", "sha256": "e3b0c44..." }
+>> Verificando hash recibido vs calculado... OK [Staging]</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SIMULADOR INTERACTIVO ===================== -->
+<section id="simulador" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Verificación en vivo</p>
+    <h2>Simulador de integridad criptográfica y detección de alteraciones</h2>
+    <p class="lead" style="max-width:74ch;">
+      La integridad en Bóveda Académica es matemática y demostrable. Pruebe cómo reacciona el sistema ante la corrupción de datos (bit-rot) o manipulación no autorizada:
+    </p>
+
+    <div class="simulator-box">
+      <div class="sim-header">
+        <div id="sim-status" class="sim-status-banner">
+          <span class="pulse-dot"></span>
+          <span id="sim-status-text"><strong>INTEGRIDAD 100% VERIFICADA</strong> — Doble hash coincidente con el registro de custodia. Auditoría encadenada intacta.</span>
+        </div>
+        <div class="sim-actions">
+          <button id="sim-btn-tamper" class="btn btn-ghost" style="padding:8px 16px;font-size:0.85rem;border-color:rgba(244,63,94,0.4);color:#fda4af;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            Simular alteración de 1 bit
+          </button>
+          <button id="sim-btn-restore" class="btn btn-primary" style="padding:8px 16px;font-size:0.85rem;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"></path></svg>
+            Restaurar estado íntegro
+          </button>
+        </div>
+      </div>
+
+      <div class="sim-grid">
+        <div class="sim-pane">
+          <div class="sim-pane-title">
+            <span>Huella del Archivo en Custodia</span>
+            <span class="mini-tag">SHA-256</span>
+          </div>
+          <div class="sim-row">
+            <span class="sim-label">Hash Criptográfico Calculado:</span>
+            <span id="sim-val-sha" class="sim-val">e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</span>
+          </div>
+          <div class="sim-row">
+            <span class="sim-label">Segundo Hash Criptográfico (BLAKE3):</span>
+            <span id="sim-val-blake" class="sim-val">af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262</span>
+          </div>
+        </div>
+
+        <div class="sim-pane">
+          <div class="sim-pane-title">
+            <span>Cadena de Auditoría Institucional</span>
+            <span class="mini-tag">Bloque #4192</span>
+          </div>
+          <div class="sim-row">
+            <span class="sim-label">Enlace con Bloque Previo (Merkle Link):</span>
+            <span id="sim-val-chain" class="sim-val">00004192: 7f83b1657ff1fc53b92dc18148a1d65bfc3... [Cadena íntegra]</span>
+          </div>
+          <div class="sim-row">
+            <span class="sim-label">Sello Temporal Cualificado:</span>
+            <span class="sim-val" style="color:#6ee7b7;">TSA RFC 3161 Token Valido (Autoridad Certificadora Institucional)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Simulador de Búsqueda Rápida Integrado -->
+      <div class="search-demo-box">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <h4 style="margin:0;font-size:0.98rem;color:#fff;">Motor de Búsqueda Compuesta de Documentos</h4>
+          <span class="mut" style="font-size:0.78rem;">Indexación instantánea en texto y metadatos</span>
+        </div>
+        <div class="search-input-wrap">
+          <svg class="search-icon-pos" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="search-demo-input" class="search-input" placeholder="Escriba para filtrar: ej. 'Tesis', 'Ingeniería', '2026'...">
+        </div>
+        <div class="search-pills">
+          <button class="search-pill-btn" data-query="categoria:Tesis">categoria:Tesis</button>
+          <button class="search-pill-btn" data-query="departamento:Informática">dep:Informática</button>
+          <button class="search-pill-btn" data-query="año:2026">año:2026</button>
+          <button class="search-pill-btn" data-query="texto:Criptografía">texto:Criptografía</button>
+        </div>
+        <div id="search-results" class="search-results-list">
+          <!-- Renderizado dinámicamente por interactivo.js -->
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CAPACIDADES COMPLETAS ===================== -->
+<section id="capacidades" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Capacidades del sistema</p>
+    <h2>Ingeniería rigurosa para la custodia de expedientes sensibles</h2>
+    <p class="lead" style="max-width:70ch;">
+      Todas las funciones necesarias para operar la custodia institucional con soberanía y sin sorpresas técnicas.
+    </p>
+
+    <div class="grid grid-3" style="margin-top:36px;">
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </div>
+        <h3>Sellado en tres capas</h3>
+        <p class="mut">Cálculo en paralelo de SHA-256 y BLAKE3, más emisión de estampa de tiempo conforme a RFC&nbsp;3161 mediante TSA integrada con tokens firmados ASN.1 DER (ESSCertIDv2).</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+        </div>
+        <h3>Inmutabilidad física de archivo</h3>
+        <p class="mut">Al ser admitido, el archivo recibe el bit inmutable a nivel de filesystem (<code>chattr +i</code>): ningún proceso ordinario ni el administrador puede sobreescribirlo o truncarlo.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+        </div>
+        <h3>Cola de admisión en staging</h3>
+        <p class="mut">Aislamiento preventivo: los documentos enviados se recepcionan en un directorio temporal de cuarentena, validando su integridad contra el envelope antes del sellado final.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M16 12l-4-4-4 4M12 16V8"></path></svg>
+        </div>
+        <h3>Auditoría encadenada sin fisuras</h3>
+        <p class="mut">Cada operación añade una entrada vinculada criptográficamente por hash a la entrada previa. No existen accesos privilegiados que puedan saltearse este registro.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        </div>
+        <h3>Búsqueda compuesta de alta velocidad</h3>
+        <p class="mut">Consultas compuestas por campos y contenido textual completo: <code>categoria:Tesis AND departamento:"Ingeniería" AND año:2026</code> con resultados en milisegundos.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+        </div>
+        <h3>Formatos universales &amp; OCR</h3>
+        <p class="mut">Extracción de texto nativa para PDF, Word <code>.docx</code>, Excel <code>.xlsx</code>, PowerPoint <code>.pptx</code>, OpenDocument <code>.odt/.ods</code> y soporte OCR con <code>tesseract</code>.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+        </div>
+        <h3>Metadatos cifrados XChaCha20</h3>
+        <p class="mut">La base de metadatos se resguarda cifrada por bloques autenticados con XChaCha20-Poly1305, bajo una clave maestra institucional de 64 bytes protegida con permisos estrictos <code>0600</code>.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+        </div>
+        <h3>Canal mTLS 1.3 con PKI interna</h3>
+        <p class="mut">La propia bóveda actúa como Autoridad Certificadora (CA) en curva P-256. El emparejamiento con estaciones y terminales requiere código de un solo uso de 10 minutos y certificado de cliente.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+        </div>
+        <h3>Confinamiento con Landlock</h3>
+        <p class="mut">En entornos Linux el servicio se auto-restringe mediante Landlock: únicamente tiene permisos de lectura/escritura en su directorio acotado, blindando el resto del servidor.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+        </div>
+        <h3>Un solo escritor por diseño</h3>
+        <p class="mut">Exclusión mutua a nivel de almacenamiento: previene de raíz condiciones de carrera, bloqueos sucios o inconsistencias ante accesos concurrentes.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        </div>
+        <h3>Reportes de fallo cifrados</h3>
+        <p class="mut">En situaciones de error excepcional se genera un diagnóstico firmado por la identidad de la máquina y cifrado a la clave pública institucional. Los datos son totalmente opacos a interceptores.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+        </div>
+        <h3>Panel Web local &amp; App de escritorio</h3>
+        <p class="mut">Interfaz de gestión local en <code>127.0.0.1:8443</code> con acceso protegido por PIN Argon2id, y aplicación de escritorio gráfica nativa en Rust con aceleración por hardware (egui).</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ROLES Y PERMISOS INSTITUCIONALES ===================== -->
+<section id="roles" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Control de acceso institucional</p>
+    <h2>Roles estándar con auditoría obligatoria</h2>
+    <p class="lead" style="max-width:72ch;">
+      El sistema estructura los privilegios institucionales de forma estricta. Seleccione un rol para inspeccionar sus alcances y su rastro criptográfico:
+    </p>
+
+    <div class="roles-tabs" role="tablist">
+      <button class="role-tab-btn active" data-role="docente" role="tab">Docente</button>
+      <button class="role-tab-btn" data-role="administracion" role="tab">Administración</button>
+      <button class="role-tab-btn" data-role="coordinacion" role="tab">Coordinación</button>
+      <button class="role-tab-btn" data-role="direccion" role="tab">Dirección</button>
+    </div>
+
+    <div class="role-content-card">
+      <div>
+        <span id="role-badge" class="role-pill-badge" style="background:rgba(56,189,248,0.15);color:#7dd3fc;border:1px solid rgba(56,189,248,0.3);">Rol Docente · Consulta Segura</span>
+        <h3 id="role-title" style="font-size:1.35rem;margin-bottom:8px;color:#fff;">Acceso y Búsqueda Documental</h3>
+        <p id="role-desc" class="mut" style="font-size:0.95rem;margin-bottom:16px;">
+          Permite a los docentes investigar y consultar el acervo institucional mediante búsqueda indexada y filtros de metadatos, con estricto régimen de solo lectura.
+        </p>
+
+        <h4 style="font-size:0.85rem;text-transform:uppercase;color:var(--text-dim);letter-spacing:0.06em;margin-bottom:8px;">Privilegios y Restricciones:</h4>
+        <ul id="role-perm-list" class="perm-list">
+          <li class="perm-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>Búsqueda por texto completo y metadatos (título, autor, cátedra)</span>
+          </li>
+          <li class="perm-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>Visualización y descarga autorizada de documentos custodiados</span>
+          </li>
+          <li class="perm-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>Sin permisos de modificación, movimiento o eliminación</span>
+          </li>
+          <li class="perm-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>Rastro: Solo lectura (consultas registradas en registro de acceso)</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="code-box">
+        <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;letter-spacing:0.08em;font-weight:600;">Entrada en Auditoría Encadenada:</div>
+        <pre><code id="role-audit-trail">ACCESS_READ { role: "Docente", doc_id: "tesis-2026-04", ip: "127.0.0.1" }</code></pre>
+        <p class="mut" style="font-size:0.78rem;margin:8px 0 0;">
+          Toda consulta o modificación genera un asiento criptográfico inalterable firmado en la cadena.
+        </p>
+      </div>
+    </div>
+
+    <!-- Tabla Resumen de Roles -->
+    <div class="scroll-wrap" style="margin-top:24px;">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Rol</th>
+            <th>Acciones Autorizadas</th>
+            <th>Mecanismo de Custodia</th>
+            <th>Rastro en Auditoría</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Docente</strong></td>
+            <td>Consultar, filtrar y leer fondos documentales autorizados.</td>
+            <td>Aislamiento de solo lectura a nivel de API.</td>
+            <td>Registro en auditoría de accesos</td>
+          </tr>
+          <tr>
+            <td><strong>Administración</strong></td>
+            <td>Organizar, renombrar y mover; traslado a papelera restaurable.</td>
+            <td>Nunca borrado directo; retención obligatoria en papelera.</td>
+            <td>Bloque encadenado firmado por hash</td>
+          </tr>
+          <tr>
+            <td><strong>Coordinación</strong></td>
+            <td>Editar metadatos y supervisar cátedras.</td>
+            <td>Snapshot inmutable obligatorio antes de cada edición (versionado).</td>
+            <td>Bloque encadenado con hash previo</td>
+          </tr>
+          <tr>
+            <td><strong>Dirección</strong></td>
+            <td>Visión global de fondos, auditoría integral y exportación de evidencias.</td>
+            <td>Acceso a barridos de integridad y firmas de acreditación.</td>
+            <td>Toda acción queda registrada</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout ok" style="margin-top:20px;">
+      <h3 style="margin-bottom:6px;">Protocolo de Destrucción Supervisada (Doble PIN)</h3>
+      <p class="mut" style="margin:0;font-size:0.92rem;">
+        La eliminación definitiva de un documento custodiado exige la autorización concurrente de dos personas con PIN independientes (Administrador y Clave de Destrucción). La operación efectúa sobrescritura física segura del archivo en disco y <strong>queda grabada para siempre en la cadena de auditoría criptográfica</strong> con fecha, responsables y huellas del documento eliminado.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SEGURIDAD Y CONFIANZA ===================== -->
+<section id="seguridad" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Modelo de confianza</p>
+    <h2>Seguridad verificable, sin puntos ciegos</h2>
+    <p class="lead" style="max-width:72ch;">
+      La integridad en Bóveda Académica no es declarativa: se demuestra mediante cálculos criptográficos independientes verificables en cualquier momento.
+    </p>
+
+    <div class="grid grid-2" style="margin-top:32px;">
+      <div class="card">
+        <h3>Mecanismos de Protección Activa</h3>
+        <ul style="padding-left:1.2em;margin:0;" class="mut">
+          <li><strong>Doble hash independiente:</strong> SHA-256 (compatibilidad internacional) y BLAKE3 (velocidad y resistencia).</li>
+          <li><strong>Inmutabilidad física a nivel FS:</strong> atributo WORM en Linux (<code>chattr +i</code>) que impide la modificación en disco.</li>
+          <li><strong>Cadena de bloques de auditoría:</strong> asientos encadenados por hash; cualquier alteración retroactiva fractura la firma del sistema.</li>
+          <li><strong>Cifrado de metadatos:</strong> XChaCha20-Poly1305 con autenticación por bloque contra claves maestras de 64 bytes.</li>
+          <li><strong>Canal de red mTLS 1.3:</strong> autenticación mutua de dispositivos con certificados en curva elíptica P-256.</li>
+          <li><strong>Confinamiento Landlock:</strong> el proceso sólo tiene visibilidad del directorio de trabajo designado.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Garantías Operativas Institucionales</h3>
+        <ul style="padding-left:1.2em;margin:0;" class="mut">
+          <li><strong>Custodia de la Clave Maestra:</strong> la institución retiene la posesión de <code>vault.key</code> (64 bytes, <code>0600</code>). Sin ella la base cifrada es inaccesible, garantizando confidencialidad absoluta.</li>
+          <li><strong>Soberanía Local 100%:</strong> cero transferencias hacia servidores remotos, telemetría o APIs externas.</li>
+          <li><strong>Auditoría Completa Sin Excepciones:</strong> todas las operaciones pasan por el motor de roles y quedan reflejadas en la cadena inalterable.</li>
+          <li><strong>Un Solo Escritor:</strong> mecanismo de exclusión mutua para garantizar que nunca ocurra corrupción de datos por concurrencia.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:24px;">
+      <h3>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+        <span>Verificabilidad Matemática Permanente</span>
+      </h3>
+      <p class="mut" style="margin:0;font-size:0.94rem;">
+        No es necesario depositar fe ciega en el software: desde el panel institucional o la consola se puede desencadenar un barrido completo del fondo documental. Si un solo byte cambia por envejecimiento magnético del disco (bit-rot) o por intervención externa, la verificación se tiñe de rojo y reporta con precisión el archivo divergente.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DESPLIEGUE ===================== -->
+<section id="despliegue" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Despliegue e infraestructura</p>
+    <h2>Instalación portable y autónoma en un solo equipo Linux</h2>
+    <p class="lead" style="max-width:72ch;">
+      Todo el sistema se aloja en un único directorio autocontenido, sin ensuciar el sistema anfitrión ni requerir dependencias externas.
+    </p>
+
+    <div class="grid grid-2" style="margin-top:32px;">
+      <div class="card">
+        <h3>Estructura del Directorio</h3>
+        <div class="code-box">
+          <button class="copy-btn" data-copy="/opt/intranet-suite/">Copiar ruta</button>
+          <pre><code>/opt/intranet-suite/
+├── bin/      vault-gui · vaultd · vaultctl
+├── lib/      (binarios nativos Rust; solo OpenGL/X11/Wayland)
+├── config/   vault.pub · vaultd.toml (opcional)
+└── data/     keyfile · base cifrada · pki/ · tsa/ · reportes
+              (o en ~/.boveda/ en despliegue de usuario)</code></pre>
+        </div>
+        <p class="mut" style="font-size:0.88rem;margin:0;">
+          Para realizar respaldos completos basta con clonar el directorio. No hay servicios ocultos en el registro del kernel.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>Puesta en Marcha Inmediata</h3>
+        <div class="code-box">
+          <button class="copy-btn" data-copy="./scripts/quickstart.sh MiClaveSegura2026">Copiar comando</button>
+          <pre><code># Despliegue guiado para usuario local
+./scripts/quickstart.sh MiClaveSegura2026
+
+# Instalación institucional con lanzador de escritorio
+sudo ./scripts/install-portable.sh --desktop</code></pre>
+        </div>
+        <h4 style="margin-top:12px;font-size:0.88rem;color:var(--text-lead);">Requisitos del Entorno:</h4>
+        <ul class="mut" style="font-size:0.88rem;padding-left:1.2em;margin:0;">
+          <li>Equipo con Linux de 64 bits (Ubuntu, Debian, Fedora, Arch, RHEL).</li>
+          <li>Sin root para la operación diaria de la bóveda.</li>
+          <li>Entorno gráfico X11 o Wayland para la aplicación nativa.</li>
+          <li>Opcional: <code>tesseract</code> si requiere OCR de imágenes escaneadas.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="kpis-grid">
+      <div class="kpi-card">
+        <b>8443</b>
+        <span>Panel Web de Administración</span>
+      </div>
+      <div class="kpi-card">
+        <b>8642</b>
+        <span>Canal mTLS 1.3 de Dispositivos</span>
+      </div>
+      <div class="kpi-card">
+        <b>4</b>
+        <span>Roles Estándar con Auditoría</span>
+      </div>
+      <div class="kpi-card">
+        <b>100%</b>
+        <span>Rust Puro sin OpenSSL</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ESTADO Y MADUREZ ===================== -->
+<section id="estado" class="reveal-on-scroll">
+  <div class="wrap">
+    <p class="eyebrow">Estado técnico</p>
+    <h2>Madurez del código y aseguramiento continuo</h2>
+    <div class="grid grid-3" style="margin-top:32px;">
+      <article class="card">
+        <h3>Desarrollo Activo 1.0.0</h3>
+        <p class="mut">Versión de trabajo consolidada en el manifiesto principal. El código fuente implementa todas las garantías descritas en esta especificación documental.</p>
+      </article>
+
+      <article class="card">
+        <h3>Calidad de Código Estricta</h3>
+        <p class="mut">Integración continua con análisis estático con <strong>Clippy en modo ultra-estricto (avisos = errores)</strong> y batería completa de pruebas extremo a extremo del canal mTLS.</p>
+      </article>
+
+      <article class="card">
+        <h3>Soberanía y Transparencia</h3>
+        <p class="mut">Cero telemetría hacia el exterior. Todas las acciones sobre el fondo documental quedan asentadas en la cadena de auditoría institucional sin privilegios no declarados.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CONTACTO / PROPUESTA ===================== -->
+<section id="contacto" class="reveal-on-scroll">
+  <div class="wrap">
+    <div class="callout" style="padding:36px;border-left:4px solid var(--accent);background:linear-gradient(135deg, rgba(56,189,248,0.1) 0%, rgba(15,23,42,0.85) 100%);">
+      <h2 style="margin-bottom:0.4em;">Solicitar demostración o propuesta institucional</h2>
+      <p class="lead" style="max-width:70ch;margin-bottom:1.2em;">
+        Podemos preparar una sesión guiada con su propio catálogo documental (ingreso de tesis, admisión, sellado RFC&nbsp;3161, búsqueda instantánea y prueba de integridad matemática).
+      </p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+        <a class="btn btn-primary" href="mailto:contacto@ejemplo.invalid?subject=Solicitud%20de%20Demostraci%C3%B3n%20B%C3%B3veda%20Acad%C3%A9mica">
+          <span>Escribir a contacto@ejemplo.invalid</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+        </a>
+        <span class="mut" style="font-size:0.88rem;">Indique: Institución, volumen estimado de expedientes y facultad solicitante.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PIE DE PÁGINA ===================== -->
+<footer>
+  <div class="wrap">
+    <div class="footer-cols">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <div class="brand-icon-wrap" style="width:32px;height:32px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M12 2.2 4.6 5.1v6.2c0 4.6 3 8.6 7.4 10.5 4.4-1.9 7.4-5.9 7.4-10.5V5.1L12 2.2Z"/></svg>
+          </div>
+          <strong style="margin:0;font-size:1.05rem;">Bóveda Académica</strong>
+        </div>
+        <p class="mut" style="font-size:0.88rem;line-height:1.6;">
+          Sistema Integral de Bóveda — Custodia documental académica con sellado criptográfico en 3 capas, inmutabilidad física WORM y auditoría encadenada sin excepciones.
+        </p>
+      </div>
+
+      <div>
+        <strong>Navegación &amp; Recursos</strong>
+        <ul class="footer-links">
+          <li><a href="ficha-tecnica.html">Ficha técnica detallada</a></li>
+          <li><a href="#flujo">Flujo de custodia en 5 capas</a></li>
+          <li><a href="#simulador">Simulador de integridad en vivo</a></li>
+          <li><a href="#seguridad">Modelo de seguridad criptográfica</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <strong>Compromiso de Custodia</strong>
+        <p class="mut" style="font-size:0.88rem;line-height:1.6;">
+          Bóveda Académica opera con soberanía institucional absoluta: todos los documentos, metadatos y sellos se conservan íntegramente en su máquina local sin puertas traseras ni modos no auditables.
+        </p>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; Bóveda Académica. Todos los derechos reservados.</span>
+      <span style="font-family:ui-monospace,monospace;color:var(--text-muted);">Pila Criptográfica Rust · mTLS 1.3 · RFC 3161 · WORM</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
