@@ -27,6 +27,10 @@ struct Received {
     bytes: Vec<u8>,
 }
 
+/// Tope de tiempo para que el servidor mTLS publique su dirección de escucha.
+/// Sin él, un arranque fallido dejaría la prueba esperando para siempre.
+const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Servidor mTLS real escuchando en un puerto libre de loopback.
 struct Server {
     addr: std::net::SocketAddr,
@@ -96,7 +100,9 @@ impl Server {
         }));
 
         // `serve()` nunca termina: se lanza como tarea y la dirección real llega
-        // por el canal de preparación del propio estado.
+        // por el canal de preparación del propio estado. La espera va acotada:
+        // si el servidor falla al arrancar, la prueba falla en segundos en vez
+        // de quedarse colgada (6 h de CI) como ocurría antes.
         let (tx, rx) = tokio::sync::oneshot::channel();
         state.set_ready_channel(tx);
         let serving = state.clone();
@@ -104,7 +110,8 @@ impl Server {
             let _ = vault_sync::serve("127.0.0.1:0".parse().unwrap(), tls, serving).await;
         });
         let addr = rt
-            .block_on(rx)
+            .block_on(tokio::time::timeout(STARTUP_TIMEOUT, rx))
+            .expect("el servidor mTLS no publicó su dirección a tiempo")
             .expect("el servidor debe publicar su dirección");
 
         Server {

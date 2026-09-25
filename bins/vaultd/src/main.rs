@@ -188,6 +188,9 @@ impl Vault {
         Ok(())
     }
 
+    /// Tope de tiempo para que el canal mTLS publique su dirección de escucha.
+    const SYNC_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
     /// Abre el canal móvil: servidor mTLS + anuncio mDNS. Devuelve el guard
     /// mDNS (retener mientras el daemon viva) y la dirección real de escucha.
     pub async fn start_sync(
@@ -245,7 +248,26 @@ impl Vault {
             .sync_listen
             .parse()
             .map_err(|e| DaemonError::Config(format!("sync_listen: {e}")))?;
-        let addr = vault_sync::serve(listen, tls, state).await?;
+        // `serve()` atiende indefinidamente: se lanza como tarea y la dirección
+        // real de escucha llega por el canal de preparación del estado. Si se
+        // esperara a que `serve()` retornara, el daemon nunca arrancaría (ni el
+        // panel ni el canal quedarían disponibles) y las pruebas E2E colgarían.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state.set_ready_channel(tx);
+        tokio::spawn(async move {
+            if let Err(e) = vault_sync::serve(listen, tls, state).await {
+                tracing::error!("canal de sincronización detenido: {e}");
+            }
+        });
+        let addr = match tokio::time::timeout(Self::SYNC_START_TIMEOUT, rx).await {
+            Ok(Ok(addr)) => addr,
+            Ok(Err(_)) => {
+                return Err(DaemonError::Config(
+                    "el canal mTLS no pudo escuchar: revise la PKI".into(),
+                ))
+            }
+            Err(_) => return Err(DaemonError::Config("el canal mTLS no arrancó".into())),
+        };
 
         let guard = if self.config.enable_sync {
             match vault_sync::mdns::announce(addr.port(), &self.config.mdns_instance) {

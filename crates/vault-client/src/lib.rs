@@ -120,7 +120,17 @@ pub fn pair(
         let tcp = tokio::net::TcpStream::connect(vault_addr).await?;
         let server_name = rustls::pki_types::ServerName::try_from("vault.local".to_string())
             .map_err(|e| ClientLibError::Protocol(format!("server name: {e}")))?;
-        let mut tls = connector.connect(server_name, tcp).await?;
+        // El saludo TLS va acotado: una bóveda que acepta la conexión y luego
+        // calla no puede dejar la petición colgada (era el síntoma de la CI).
+        let handshake = tokio::time::timeout(
+            vault_sync::client::NET_TIMEOUT,
+            connector.connect(server_name, tcp),
+        );
+        let mut tls = match handshake.await {
+            Ok(Ok(tls)) => tls,
+            Ok(Err(e)) => return Err(ClientLibError::Io(e)),
+            Err(_) => return Err(ClientLibError::Protocol("saludo TLS agotado".into())),
+        };
 
         let body = serde_json::json!({ "code": code, "device_id": device_id });
         let body = body.to_string().into_bytes();

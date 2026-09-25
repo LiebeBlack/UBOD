@@ -134,13 +134,24 @@ fn now_epoch() -> u64 {
         .unwrap_or(0)
 }
 
-/// Pone en marcha el servidor mTLS en `addr`. Devuelve la dirección real
-/// (útil cuando se pasa puerto 0 en pruebas).
+/// Tiempo máximo para completar el saludo TLS de una conexión entrante.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Atiende el canal mTLS en `addr` **indefinidamente** (sólo retorna si el
+/// listener falla). La dirección real de escucha se publica por
+/// [`SyncState::set_ready_channel`], así que lo correcto es lanzarla como tarea
+/// y esperar esa dirección; el valor `Ok` de retorno sólo llegaría si el bucle
+/// de aceptación terminara.
 pub async fn serve(
     addr: SocketAddr,
     tls: ServerTlsConfig,
     state: Arc<SyncState>,
 ) -> Result<SocketAddr, SyncError> {
+    // El emisor del canal de preparación se retira de inmediato: si esta función
+    // sale por error antes de escuchar (PKI inválida, puerto ocupado), el emisor
+    // se destruye y quien espera la dirección recibe el cierre del canal en vez
+    // de quedarse bloqueado para siempre.
+    let ready = state.ready_tx.lock().unwrap().take();
     let config = Arc::new(build_server_config(&tls)?);
     let acceptor = TlsAcceptor::from(config);
     let listener = TcpListener::bind(addr).await?;
@@ -148,7 +159,7 @@ pub async fn serve(
     tracing::info!("vault-sync escuchando en {real_addr} (mTLS 1.3)");
 
     // Señaliza la dirección real para quien hizo spawn de esta tarea.
-    if let Some(tx) = state.ready_tx.lock().unwrap().take() {
+    if let Some(tx) = ready {
         let _ = tx.send(real_addr);
     }
 
@@ -157,13 +168,16 @@ pub async fn serve(
         let acceptor = acceptor.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            match acceptor.accept(stream).await {
-                Ok(tls_stream) => {
+            // Un cliente que abre el socket y no completa el saludo TLS no puede
+            // retener la conexión (ni el descriptor) indefinidamente.
+            match tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
+                Ok(Ok(tls_stream)) => {
                     if let Err(e) = handle_conn(tls_stream, state).await {
                         tracing::warn!("conexión: {e}");
                     }
                 }
-                Err(e) => tracing::warn!("handshake TLS fallido: {e}"),
+                Ok(Err(e)) => tracing::warn!("handshake TLS fallido: {e}"),
+                Err(_) => tracing::warn!("handshake TLS agotado: conexión descartada"),
             }
         });
     }

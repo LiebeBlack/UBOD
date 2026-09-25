@@ -107,9 +107,32 @@ impl ServerTlsConfig {
     }
 }
 
+/// Proveedor criptográfico puro-Rust del proceso (RustCrypto).
+///
+/// Rustls se compila aquí sin `ring` ni `aws-lc-rs` (`default-features = false`),
+/// de modo que `CryptoProvider::get_default_or_install_from_crate_features()`
+/// **aborta con pánico**. Toda API que consulte el proveedor predeterminado
+/// —`WebPkiClientVerifier::builder`, por ejemplo— exige que esté instalado: se
+/// instala una sola vez (idempotente y seguro entre hilos) y todas las configs
+/// reutilizan ese mismo `Arc`.
+pub fn crypto_provider() -> Arc<rustls::crypto::CryptoProvider> {
+    static PROVIDER: std::sync::OnceLock<Arc<rustls::crypto::CryptoProvider>> =
+        std::sync::OnceLock::new();
+    PROVIDER
+        .get_or_init(|| {
+            let provider = rustls_rustcrypto::provider();
+            let candidato = Arc::new(provider.clone());
+            // Si otro hilo ganó la carrera, se respeta el ya instalado. El
+            // respaldo mantiene el mismo proveedor aunque la instalación falle.
+            let _ = provider.install_default();
+            rustls::crypto::CryptoProvider::get_default().cloned().unwrap_or(candidato)
+        })
+        .clone()
+}
+
 /// Construye el `ServerConfig` mTLS: exige certificado de cliente firmado por la CA.
 pub fn build_server_config(cfg: &ServerTlsConfig) -> Result<rustls::ServerConfig, SyncError> {
-    let provider = Arc::new(rustls_rustcrypto::provider());
+    let provider = crypto_provider();
     let mut roots = rustls::RootCertStore::empty();
     roots
         .add(cfg.ca_der.clone())
@@ -117,10 +140,16 @@ pub fn build_server_config(cfg: &ServerTlsConfig) -> Result<rustls::ServerConfig
     // Client-auth ofrecido pero opcional: un dispositivo sin certificado aún
     // puede alcanzar /v1/pair (protegido por código de un solo uso); todo lo
     // demás exige dispositivo autorizado (ver server.rs::require_auth).
-    let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
-        .allow_unauthenticated()
-        .build()
-        .map_err(|e| SyncError::Tls(e.to_string()))?;
+    //
+    // `builder_with_provider` es obligatorio: `builder()` consultaría el
+    // proveedor predeterminado y sin `ring`/`aws-lc-rs` eso es un pánico.
+    let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+        Arc::new(roots),
+        provider.clone(),
+    )
+    .allow_unauthenticated()
+    .build()
+    .map_err(|e| SyncError::Tls(e.to_string()))?;
 
     let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -141,7 +170,7 @@ pub struct ClientTlsConfig {
 
 impl ClientTlsConfig {
     pub fn build(&self) -> Result<rustls::ClientConfig, SyncError> {
-        let provider = Arc::new(rustls_rustcrypto::provider());
+        let provider = crypto_provider();
         let mut roots = rustls::RootCertStore::empty();
         roots
             .add(self.ca_der.clone())
@@ -164,7 +193,7 @@ impl ClientTlsConfig {
 pub fn anon_client_config(
     ca_der: CertificateDer<'static>,
 ) -> Result<rustls::ClientConfig, SyncError> {
-    let provider = Arc::new(rustls_rustcrypto::provider());
+    let provider = crypto_provider();
     let mut roots = rustls::RootCertStore::empty();
     roots
         .add(ca_der)
@@ -227,6 +256,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = ServerTlsConfig::load_or_create(dir.path(), "vault-server").unwrap();
         let _sc = build_server_config(&cfg).unwrap();
+    }
+
+    /// Regresión del cuelgue que dejaba la CI 6 h en `Build & test`.
+    ///
+    /// Sin `ring`/`aws-lc-rs`, consultar el proveedor predeterminado de rustls
+    /// aborta el proceso: `build_server_config` se apoyaba en
+    /// `WebPkiClientVerifier::builder` y el servidor nunca llegaba a publicar su
+    /// dirección. Además de usar `builder_with_provider`, el proveedor debe
+    /// quedar instalado para cualquier otra API que sí lo consulte.
+    #[test]
+    fn crypto_provider_is_installed_once() {
+        let a = crypto_provider();
+        let b = crypto_provider();
+        assert!(Arc::ptr_eq(&a, &b), "el proveedor se reutiliza, no se recrea");
+        assert!(
+            rustls::crypto::CryptoProvider::get_default().is_some(),
+            "el proveedor predeterminado debe quedar instalado"
+        );
     }
 
     /// E2E real: servidor mTLS en 127.0.0.1 + emparejamiento con código de un

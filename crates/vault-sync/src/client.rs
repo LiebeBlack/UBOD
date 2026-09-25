@@ -20,7 +20,17 @@ pub enum ClientError {
     Http(String),
     #[error("el servidor devolvió {status}: {body}")]
     Api { status: u16, body: String },
+    #[error("tiempo de espera agotado: la bóveda no respondió a tiempo")]
+    Timeout,
 }
+
+/// Tope de tiempo de cada operación de red del canal: conexión, saludo TLS,
+/// lectura de la respuesta y de cada parte de ella.
+///
+/// Sin él, un servidor que acepta la conexión y luego calla (o una respuesta
+/// truncada) dejaría al cliente esperando para siempre; en la CI eso equivale a
+/// un test colgado durante horas.
+pub const NET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Resultado de una respuesta HTTP.
 #[derive(Debug, Clone)]
@@ -64,25 +74,33 @@ impl VaultClient {
         path: &str,
         body: Option<Vec<u8>>,
     ) -> Result<Response, ClientError> {
-        let tcp = TcpStream::connect(self.addr).await?;
-        let mut tls = self
-            .connector
-            .connect(self.server_name.clone(), tcp)
-            .await?;
-        let body = body.unwrap_or_default();
-        let head = format!(
-            "{method} {path} HTTP/1.1\r\nHost: vault\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        tls.write_all(head.as_bytes()).await?;
-        if !body.is_empty() {
-            tls.write_all(&body).await?;
+        let exchange = async {
+            let tcp = TcpStream::connect(self.addr).await?;
+            let mut tls = self
+                .connector
+                .connect(self.server_name.clone(), tcp)
+                .await?;
+            let body = body.unwrap_or_default();
+            let head = format!(
+                "{method} {path} HTTP/1.1\r\nHost: vault\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            tls.write_all(head.as_bytes()).await?;
+            if !body.is_empty() {
+                tls.write_all(&body).await?;
+            }
+            tls.flush().await?;
+            // La respuesta se delimita por Content-Length: esperar el fin del flujo
+            // dejaría la petición bloqueada para siempre (el servidor mantiene viva
+            // la conexión hasta que se le pide cerrar).
+            read_response(&mut tls).await
+        };
+        // Tope global: ni la conexión, ni el handshake, ni la respuesta pueden
+        // eternizarse.
+        match tokio::time::timeout(NET_TIMEOUT, exchange).await {
+            Ok(result) => result,
+            Err(_) => Err(ClientError::Timeout),
         }
-        tls.flush().await?;
-        // La respuesta se delimita por Content-Length: esperar el fin del flujo
-        // dejaría la petición bloqueada para siempre (el servidor mantiene viva
-        // la conexión hasta que se le pide cerrar).
-        read_response(&mut tls).await
     }
 
     /// GET /v1/ping — verifica sesión mTLS y autorización del dispositivo.
@@ -144,6 +162,18 @@ fn parse_head(head: &str) -> Result<ResponseHead, ClientError> {
     })
 }
 
+/// Lee del stream con [`NET_TIMEOUT`]: una lectura que nunca llega se traduce
+/// en error en lugar de colgar la petición.
+async fn read_bounded<S: AsyncReadExt + Unpin>(
+    stream: &mut S,
+    tmp: &mut [u8],
+) -> Result<usize, ClientError> {
+    tokio::time::timeout(NET_TIMEOUT, stream.read(tmp))
+        .await
+        .map_err(|_| ClientError::Timeout)?
+        .map_err(ClientError::from)
+}
+
 /// Lee una respuesta completa: cabeceras y **exactamente** `Content-Length`
 /// bytes de cuerpo.
 ///
@@ -159,7 +189,7 @@ pub async fn read_response<S: AsyncReadExt + Unpin>(
         if let Some(p) = find_header_end(&buf) {
             break p;
         }
-        let n = stream.read(&mut tmp).await?;
+        let n = read_bounded(stream, &mut tmp).await?;
         if n == 0 {
             return Err(ClientError::Http(
                 "conexión cerrada antes de recibir las cabeceras".into(),
@@ -173,7 +203,7 @@ pub async fn read_response<S: AsyncReadExt + Unpin>(
     let head = parse_head(&String::from_utf8_lossy(&buf[..header_end]))?;
     let mut body = buf[header_end + 4..].to_vec();
     while body.len() < head.content_length {
-        let n = stream.read(&mut tmp).await?;
+        let n = read_bounded(stream, &mut tmp).await?;
         if n == 0 {
             return Err(ClientError::Http(format!(
                 "cuerpo incompleto: {} de {} bytes",
