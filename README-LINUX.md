@@ -80,9 +80,15 @@ Dentro de `~/.boveda/data/`:
 ```
 vaultd --quickstart [PIN]   crea bóveda + PIN y arranca todo (recomendado)
 vaultd --init PIN           solo configura el PIN y sale
-vaultd --landlock           añade restricciones de acceso al sistema de archivos
+vaultd --no-landlock        desactiva el confinamiento del proceso (Linux)
 vaultd                      arranca con la config existente (~/.boveda/vaultd.toml)
 ```
+
+Por defecto el servicio se **confina con Landlock** (Linux): sólo puede leer y
+escribir dentro de `~/.boveda/`; del resto del sistema únicamente alcanza los
+directorios imprescindibles (`/usr`, `/etc`, `/proc`, `/dev`, `/tmp`…), nunca el
+HOME del usuario. Si el kernel no lo soporta se avisa y el servicio arranca sin
+confinamiento (`--no-landlock` evita el intento explícitamente).
 
 Si el servicio ya está en marcha y se intenta arrancar otro escritor, **falla con
 un mensaje claro**: la base de datos admite un único escritor para que nadie
@@ -102,6 +108,20 @@ vaultctl upload <addr> <archivo> [--categoria C]
 `target/release/vault-gui` (o `/opt/intranet-suite/bin/vault-gui`) abre una
 aplicación de escritorio con tema negro puro: nunca requiere terminal.
 
+```
+vault-gui                 uso normal: gestión documental según el rol
+vault-gui --ITA           habilita las pantallas de administración de esta ejecución
+vault-gui --no-landlock   no confina la escritura del proceso (Linux)
+vault-gui --help          ayuda
+```
+
+La aplicación **no se confina en lectura** (necesita poder importar de cualquier
+carpeta), pero en Linux sí confina su **escritura** a `~/.boveda/` mediante
+Landlock. Las pantallas de **Usuarios** y **Sistema** existen únicamente con
+`--ITA` y, además, requieren una sesión de administración vigente abierta por la
+consola de administración. Nada de lo que se haga en ellas se escribe en la
+cadena de auditoría institucional.
+
 - **Primera ejecución**: pide un PIN y crea la bóveda con cuatro usuarios
   estándar (mismo PIN para todos, cámbielos después desde la gestión de
   usuarios de su instalación):
@@ -117,9 +137,14 @@ aplicación de escritorio con tema negro puro: nunca requiere terminal.
   Papelera (restaurar) y Auditoría (cadena verificada).
 - **Importar** sella con el mismo camino que el canal móvil: deduplicación por
   contenido, sello de tiempo RFC 3161, archivo inmutable y **texto indexado**
-  (la búsqueda `texto:penicilina` encuentra el contenido del PDF).
+  (la búsqueda `texto:penicilina` encuentra el contenido del documento).
+- La **búsqueda por contenido** cubre PDF, **Word (`docx`)**, **Excel (`xlsx`)**,
+  **PowerPoint (`pptx`)**, **OpenDocument (`odt`/`ods`/`odp`)**, RTF, texto plano
+  y OCR de imágenes si `tesseract` está instalado. El Office binario antiguo
+  (`.doc`/`.xls`/`.ppt`) se indexa si hay `antiword` o `catdoc` disponibles.
 - El **selector de archivos** es propio de la aplicación: no necesita ningún
-  diálogo externo instalado.
+  diálogo externo instalado ni lanza procesos del sistema (nada de `zenity` ni
+  `kdialog`).
 - Usa la **misma bóveda** que `vaultd`: keyfile y BD en `~/.boveda/data/`.
   Si no existe, el asistente la crea; si existe, arranca en el login.
 - Ante un fallo inesperado (o un error lógico registrado) la app genera un

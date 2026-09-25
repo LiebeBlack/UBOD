@@ -12,6 +12,7 @@ vault-core = { workspace = true }
 vault-crypto = { workspace = true }
 vault-client = { workspace = true }
 vault-sync = { workspace = true }
+vault-fs = { workspace = true }
 vault-store = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

@@ -316,49 +316,155 @@ pub fn secure_wipe(path: &Path) -> Result<(), FsError> {
     Ok(())
 }
 
-/// Landlock (Linux): el daemon solo puede escribir en staging y leer la bóveda.
+/// Traduce el estado de un ruleset ya aplicado a un resultado con traza.
+///
+/// Se avisa y se continúa si el kernel sólo aplica parte de la política: un
+/// sandbox parcial sigue sumando defensa en profundidad. No aplicarlo en
+/// absoluto sí es un error, y cada llamante decide cómo tratarlo.
 #[cfg(unix)]
-pub fn apply_landlock(vault_root: &Path, staging: &Path) -> Result<(), String> {
-    use landlock::{
-        Access, AccessFs, PathBeneath, PathRulesWrapper, Ruleset, RulesetAttr, RulesetStatus,
-    };
-    let rs = Ruleset::default()
-        .set_compatibility(landlock::CompatLevel::BestEffort)
-        .map_err(|e| e.to_string())?
-        .handle_access(AccessFs::from_all(landlock::ABI::V1))
-        .map_err(|e| e.to_string())?
-        .add_rules(PathRulesWrapper::new(vec![PathBeneath::new(
-            AccessFs::from_read(landlock::ABI::V1),
-            vault_root,
-        )]))
-        .map_err(|e| e.to_string())?
-        .add_rules(PathRulesWrapper::new(vec![PathBeneath::new(
-            AccessFs::from_read(landlock::ABI::V1)
-                | AccessFs::WriteFile
-                | AccessFs::RemoveFile
-                | AccessFs::MakeDir
-                | AccessFs::RemoveDir,
-            staging,
-        )]))
-        .map_err(|e| e.to_string())?
-        .restrict_self()
-        .map_err(|e| e.to_string())?;
-    match rs.ruleset {
-        RulesetStatus::FullyEnforced => {
-            tracing::info!("Landlock: totalmente aplicado");
+fn landlock_status(status: landlock::RestrictionStatus, what: &str) -> Result<(), String> {
+    match status.ruleset {
+        landlock::RulesetStatus::FullyEnforced => {
+            tracing::info!("Landlock ({what}): totalmente aplicado");
             Ok(())
         }
-        RulesetStatus::PartiallyEnforced => {
-            tracing::warn!("Landlock: parcialmente aplicado (kernel antiguo)");
+        landlock::RulesetStatus::PartiallyEnforced => {
+            tracing::warn!("Landlock ({what}): parcialmente aplicado (kernel antiguo)");
             Ok(())
         }
-        _ => Err("landlock no pudo activarse".into()),
+        landlock::RulesetStatus::NotEnforced => Err(format!("landlock no pudo activarse ({what})")),
     }
 }
 
-#[cfg(windows)]
-pub fn apply_landlock(_vault_root: &Path, _staging: &Path) -> Result<(), String> {
+/// Rutas del sistema que un proceso confinado necesita poder LEER para seguir
+/// funcionando: bibliotecas, zona horaria, `/proc`, `/sys` y `/run`.
+///
+/// El HOME del usuario NO está aquí a propósito: es justo lo que el
+/// confinamiento debe dejar fuera del alcance del proceso.
+#[cfg(unix)]
+const SYSTEM_READ_ROOTS: &[&str] = &[
+    "/usr", "/etc", "/bin", "/sbin", "/lib", "/lib64", "/proc", "/sys", "/run",
+];
+
+/// Rutas del sistema con escritura incidental: `/dev/null` (salida
+/// redireccionada) y los temporales del sistema (OCR, ficheros de trabajo).
+#[cfg(unix)]
+const SYSTEM_WRITE_ROOTS: &[&str] = &["/dev", "/tmp"];
+
+/// Landlock (Linux): confina el SERVICIO a la bóveda y a su directorio de datos.
+///
+/// Fuera de esas dos rutas el proceso sólo puede leer los directorios de sistema
+/// imprescindibles ([`SYSTEM_READ_ROOTS`]); en particular no alcanza el HOME del
+/// usuario, así que una vulnerabilidad en el analizador de un PDF o de un DOCX
+/// no llega al resto del sistema de archivos.
+///
+/// Requisitos y matices:
+/// - Las rutas **deben existir** antes de llamar: Landlock no puede conceder
+///   acceso a algo que todavía no está en el sistema de archivos.
+/// - Se pide el ABI 4 (Linux 6.7) porque cubre los derechos que importan
+///   (`Truncate`, `Refer`) sin arrastrar los más recientes, que forzarían un
+///   sandbox parcial permanente en kernels actuales. Con `BestEffort` la crate
+///   enmascara lo que el kernel en marcha no soporte y lo reporta como parcial.
+/// - No es fatal: si el kernel no soporta Landlock devuelve `Err` y es el
+///   llamante quien decide (el servicio avisa y continúa).
+#[cfg(unix)]
+pub fn apply_landlock(vault_root: &Path, data_dir: &Path) -> Result<(), String> {
+    let writable: Vec<&Path> = SYSTEM_WRITE_ROOTS
+        .iter()
+        .map(Path::new)
+        .chain([vault_root, data_dir])
+        .collect();
+    let read_only: Vec<&Path> = SYSTEM_READ_ROOTS.iter().map(Path::new).collect();
+    tracing::info!(
+        boveda = %vault_root.display(),
+        datos = %data_dir.display(),
+        "Landlock: el servicio sólo podrá escribir en la bóveda y en <datos>"
+    );
+    landlock_restrict(&read_only, &writable, false)
+}
+
+/// En sistemas sin Landlock no hay nada que confinar: el aislamiento físico de
+/// la bóveda queda a cargo de los permisos y atributos de archivo.
+#[cfg(not(unix))]
+pub fn apply_landlock(_vault_root: &Path, _data_dir: &Path) -> Result<(), String> {
     Ok(())
+}
+
+/// Landlock (Linux) para procesos interactivos: confina **sólo la ESCRITURA** a
+/// `roots` (más `/dev` y `/tmp`) y deja la lectura intacta.
+///
+/// Es la política adecuada para la aplicación gráfica y las consolas de
+/// administración: importar un documento exige poder LEER de cualquier carpeta
+/// del usuario (Escritorio, Descargas, una unidad externa), pero el proceso no
+/// debe poder escribir nada fuera de las rutas indicadas. Los derechos de
+/// lectura no se tramitan, así que quedan como estaban.
+#[cfg(unix)]
+pub fn apply_landlock_write_only(roots: &[&Path]) -> Result<(), String> {
+    let writable: Vec<&Path> = SYSTEM_WRITE_ROOTS
+        .iter()
+        .map(Path::new)
+        .chain(roots.iter().copied())
+        .collect();
+    landlock_restrict(&[], &writable, true)
+}
+
+#[cfg(not(unix))]
+pub fn apply_landlock_write_only(_roots: &[&Path]) -> Result<(), String> {
+    Ok(())
+}
+
+/// Aplica un ruleset de Landlock.
+///
+/// Con `write_only` en falso se tramitan los derechos completos de `read_only`
+/// (sólo lectura) y de `writable` (lectura y escritura); con `write_only` en
+/// verdadero se tramitan únicamente los derechos de escritura, de modo que la
+/// lectura queda sin restringir.
+#[cfg(unix)]
+fn landlock_restrict(
+    read_only: &[&Path],
+    writable: &[&Path],
+    write_only: bool,
+) -> Result<(), String> {
+    use landlock::{
+        path_beneath_rules, Access, AccessFs, Compatible, Ruleset, RulesetAttr, RulesetCreatedAttr,
+        ABI,
+    };
+    let abi = ABI::V4;
+    // En modo escritura sólo se tramita (y se concede) `from_write`: añadir a la
+    // regla un derecho no tramitado sería incoherente y la crate lo rechaza.
+    let handled = if write_only {
+        AccessFs::from_write(abi)
+    } else {
+        AccessFs::from_all(abi)
+    };
+    let mut rules = Ruleset::default()
+        .set_compatibility(landlock::CompatLevel::BestEffort)
+        .handle_access(handled)
+        .map_err(|e| e.to_string())?
+        .create()
+        .map_err(|e| e.to_string())?;
+    if !write_only && !read_only.is_empty() {
+        rules = rules
+            .add_rules(path_beneath_rules(
+                read_only.iter().copied(),
+                AccessFs::from_read(abi),
+            ))
+            .map_err(|e| e.to_string())?;
+    }
+    if !writable.is_empty() {
+        rules = rules
+            .add_rules(path_beneath_rules(writable.iter().copied(), handled))
+            .map_err(|e| e.to_string())?;
+    }
+    let status = rules.restrict_self().map_err(|e| e.to_string())?;
+    landlock_status(
+        status,
+        if write_only {
+            "sólo escritura"
+        } else {
+            "servicio"
+        },
+    )
 }
 
 #[cfg(test)]

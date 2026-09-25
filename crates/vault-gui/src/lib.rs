@@ -18,6 +18,135 @@ use vault_roles::{RoleService, Session};
 use vault_store::VaultDb;
 
 // ----------------------------------------------------------------------
+// Modo de administración (IT) y opciones de arranque
+// ----------------------------------------------------------------------
+
+/// Habilitación de las pantallas de administración dentro de la aplicación.
+///
+/// El modo de administración **no se puede activar desde la interfaz**: sólo
+/// existe si la aplicación se lanzó explícitamente desde una terminal con el
+/// argumento `--ITA`, y aun así requiere además una sesión de administración
+/// vigente, que abre siempre la consola `vault-it` (nunca esta aplicación).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ItMode {
+    /// Ejecución normal: las pantallas de administración no existen.
+    #[default]
+    Disabled,
+    /// Lanzada desde una terminal con `--ITA`.
+    ConsoleLaunched,
+}
+
+impl ItMode {
+    /// ¿Se pidió la consola de administración al arrancar?
+    pub fn is_console_launched(self) -> bool {
+        matches!(self, ItMode::ConsoleLaunched)
+    }
+}
+
+/// Opciones de arranque de la aplicación gráfica.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuiOptions {
+    /// Modo de administración (requiere `--ITA` desde una terminal).
+    pub it_mode: ItMode,
+    /// Aplicar Landlock al arrancar (Linux): la lectura queda libre para poder
+    /// importar de cualquier carpeta, pero la escritura se confina a la bóveda.
+    pub landlock: bool,
+}
+
+impl Default for GuiOptions {
+    fn default() -> Self {
+        GuiOptions {
+            it_mode: ItMode::Disabled,
+            landlock: true,
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// Validación estricta de entrada
+// ----------------------------------------------------------------------
+
+/// Normaliza un nombre de usuario: sin espacios alrededor y en minúsculas.
+pub fn normalize_username(raw: &str) -> String {
+    raw.trim().to_lowercase()
+}
+
+/// Valida y normaliza un nombre de usuario.
+///
+/// Reglas: 3–32 caracteres, sólo `[a-z0-9._-]`, sin empezar ni terminar en
+/// separador. Devuelve el nombre ya normalizado para no repetir la lógica.
+pub fn validate_username(raw: &str) -> Result<String, String> {
+    let user = normalize_username(raw);
+    let len = user.chars().count();
+    if len < 3 {
+        return Err("El usuario debe tener al menos 3 caracteres".into());
+    }
+    if len > 32 {
+        return Err("El usuario no puede pasar de 32 caracteres".into());
+    }
+    if !user
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("Sólo se admiten letras sin tilde, dígitos, «.», «-» y «_»".into());
+    }
+    if user.starts_with('.') || user.starts_with('-') || user.starts_with('_') {
+        return Err("El usuario no puede empezar por «.», «-» o «_»".into());
+    }
+    if user.ends_with('.') || user.ends_with('-') || user.ends_with('_') {
+        return Err("El usuario no puede terminar en «.», «-» o «_»".into());
+    }
+    Ok(user)
+}
+
+/// Valida un nombre visible (no vacío, cotas razonables).
+pub fn validate_display_name(raw: &str) -> Result<String, String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Err("El nombre visible no puede estar vacío".into());
+    }
+    if name.chars().count() > 80 {
+        return Err("El nombre visible no puede pasar de 80 caracteres".into());
+    }
+    Ok(name.to_string())
+}
+
+/// Valida un PIN: mínimo 6 caracteres, con tope para no admitir entradas
+/// desmesuradas que encarezcan el hashing Argon2id.
+pub fn validate_pin(pin: &str) -> Result<(), String> {
+    let len = pin.chars().count();
+    if len < 6 {
+        return Err("El PIN debe tener al menos 6 caracteres".into());
+    }
+    if len > 128 {
+        return Err("El PIN no puede pasar de 128 caracteres".into());
+    }
+    Ok(())
+}
+
+/// Valida un par de PIN introducido dos veces.
+pub fn validate_pin_pair(pin: &str, pin2: &str) -> Result<(), String> {
+    validate_pin(pin)?;
+    if pin != pin2 {
+        return Err("Los PIN no coinciden".into());
+    }
+    Ok(())
+}
+
+/// Valida el alta completa de un usuario y devuelve el nombre normalizado.
+pub fn validate_new_user(
+    username: &str,
+    display: &str,
+    pin: &str,
+    pin2: &str,
+) -> Result<String, String> {
+    let user = validate_username(username)?;
+    validate_display_name(display)?;
+    validate_pin_pair(pin, pin2)?;
+    Ok(user)
+}
+
+// ----------------------------------------------------------------------
 // Datos de aplicación (todo lo mutables vive aquí; la BD solo se toca desde
 // estos handles para evitar bloqueos del hilo de UI)
 // ----------------------------------------------------------------------
@@ -138,6 +267,8 @@ pub struct BovedaApp {
     /// Bóveda en modo consulta: el servicio tiene la escritura y la app no
     /// puede modificar nada (solo leer y autenticar).
     pub read_only: bool,
+    /// Modo de administración: sólo se habilita con `--ITA` desde una terminal.
+    pub it_mode: ItMode,
 
     pub screen: Screen,
     pub modal: Modal,
@@ -222,7 +353,10 @@ impl BovedaApp {
     }
 
     /// Crea el estado inicial de la app (aún sin bóveda abierta).
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    ///
+    /// `options.it_mode` sólo llega a [`ItMode::ConsoleLaunched`] cuando el
+    /// binario se lanzó con `--ITA` desde una terminal.
+    pub fn new(cc: &eframe::CreationContext<'_>, options: GuiOptions) -> Self {
         apply_oled_theme(&cc.egui_ctx);
         let data_dir = Self::default_data_dir();
         let vault_root = data_dir.join("vault");
@@ -262,6 +396,7 @@ impl BovedaApp {
             it_pubkey,
             reporter,
             last_report: None,
+            it_mode: options.it_mode,
         }
     }
 
@@ -547,12 +682,14 @@ impl eframe::App for BovedaApp {
             self.draw_read_only_banner(ctx);
         }
 
-        // sesión privilegiada transitoria: banner + navegación extra mientras dure
-        let privileged = self.privileged_active();
+        // Modo de administración: exige haber arrancado la aplicación con `--ITA`
+        // Y una sesión de administración vigente. Sin lo primero la aplicación
+        // ni siquiera anuncia que la administración exista.
+        let privileged = self.it_screen_allowed();
         if privileged {
             self.draw_privileged_banner(ctx);
         }
-        // si la sesión privilegiada caducó, no se puede seguir en sus pantallas
+        // Si la sesión caducó (o no hay habilitación), no se sigue en sus pantallas.
         if !privileged && matches!(self.screen, Screen::Users | Screen::System) {
             self.screen = Screen::Documents;
         }
@@ -609,6 +746,29 @@ impl BovedaApp {
     /// la aplicación solo la detecta (nunca la crea).
     pub fn privileged_active(&self) -> bool {
         matches!(self.privileged_remaining(), Some(rest) if rest > 0)
+    }
+
+    /// ¿Se pueden abrir las pantallas de administración?
+    ///
+    /// Exige las DOS condiciones a la vez: que la aplicación se lanzara desde
+    /// una terminal con `--ITA` y que exista una sesión de administración
+    /// vigente. Ninguna de las dos se puede conceder desde la interfaz.
+    pub fn it_screen_allowed(&self) -> bool {
+        self.it_mode.is_console_launched() && self.privileged_active()
+    }
+
+    /// Motivo por el que la administración no está disponible, si lo hay.
+    ///
+    /// Los mensajes son deliberadamente neutros: ni la existencia ni el modo de
+    /// activación del protocolo se documentan dentro del producto.
+    fn it_unavailable_reason(&self) -> Option<&'static str> {
+        if !self.it_mode.is_console_launched() {
+            Some("La administración no está habilitada en esta ejecución.")
+        } else if !self.privileged_active() {
+            Some("Se requiere una sesión de administración vigente.")
+        } else {
+            None
+        }
     }
 
     /// Aviso de modo consulta: la app puede leer, pero no modificar la bóveda.
@@ -678,9 +838,9 @@ impl BovedaApp {
 
     /// Panel de administración local del sistema (solo con sesión vigente).
     fn draw_system(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
-        if !self.privileged_active() {
+        if let Some(why) = self.it_unavailable_reason() {
             ui.heading("Sistema");
-            ui.weak("La administración local requiere una sesión de administración vigente.");
+            ui.weak(why);
             return;
         }
         let can_write = self.can_write();
@@ -880,16 +1040,13 @@ impl BovedaApp {
                 ui.add_enabled_ui(can_write, |ui| {
                     let importar = ui.button("＋ Importar…");
                     if importar.clicked() {
-                        match rfd_pick_file() {
-                            Some(path) => self.import_document(&session, path),
-                            // sin diálogo del sistema: navegador propio, igualmente gráfico
-                            None => {
-                                self.modal = Modal::FilePicker {
-                                    dir: self.default_picker_dir(),
-                                    filter: String::new(),
-                                }
-                            }
-                        }
+                        // Selector propio de la aplicación: no depende de ningún
+                        // diálogo externo (zenity/kdialog) ni de procesos
+                        // bloqueantes del sistema operativo.
+                        self.modal = Modal::FilePicker {
+                            dir: self.default_picker_dir(),
+                            filter: String::new(),
+                        };
                     }
                     if !can_write {
                         importar.on_hover_text("No disponible en modo consulta");
@@ -1131,9 +1288,9 @@ impl BovedaApp {
     /// que se haga en esta pantalla se escribe en la cadena de auditoría
     /// institucional (visible para Coordinación y Dirección).
     fn draw_users(&mut self, ui: &mut egui::Ui) {
-        if !self.privileged_active() {
+        if let Some(why) = self.it_unavailable_reason() {
             ui.heading("Usuarios");
-            ui.weak("Se requiere una sesión de administración vigente.");
+            ui.weak(why);
             return;
         }
         let can_write = self.can_write();
@@ -1258,6 +1415,11 @@ impl BovedaApp {
 
     /// Habilita o deshabilita un usuario. No escribe en la auditoría.
     fn it_toggle_user(&mut self, username: &str) {
+        // Defensa en profundidad: aunque la interfaz ya no ofrece la acción,
+        // la operación vuelve a comprobar la habilitación.
+        if !self.it_screen_allowed() {
+            return;
+        }
         let Some(enabled) = self
             .roles
             .as_ref()
@@ -1286,6 +1448,9 @@ impl BovedaApp {
 
     /// Define el PIN de un usuario. No escribe en la auditoría.
     fn it_set_pin(&mut self, username: &str, pin: &str) {
+        if !self.it_screen_allowed() || validate_pin(pin).is_err() {
+            return;
+        }
         let Some(svc) = self.roles.as_mut() else {
             return;
         };
@@ -1297,10 +1462,19 @@ impl BovedaApp {
 
     /// Da de alta un usuario. No escribe en la auditoría.
     fn it_add_user(&mut self, username: &str, display: &str, role: Role, pin: &str) {
+        if !self.it_screen_allowed() {
+            return;
+        }
+        let Ok(username) = validate_username(username) else {
+            return;
+        };
+        if validate_display_name(display).is_err() || validate_pin(pin).is_err() {
+            return;
+        }
         let Some(svc) = self.roles.as_mut() else {
             return;
         };
-        match svc.upsert_user(username, display, role, pin) {
+        match svc.upsert_user(&username, display, role, pin) {
             Ok(()) => self.toast(
                 ToastKind::Ok,
                 format!("Usuario {} creado ({})", username, role.label()),
@@ -1617,8 +1791,8 @@ impl BovedaApp {
                 pin,
                 pin2,
             } => {
-                // Solo tiene sentido con la sesión de administración vigente.
-                if !self.privileged_active() {
+                // Solo tiene sentido con la administración habilitada.
+                if !self.it_screen_allowed() {
                     self.modal = Modal::None;
                     return;
                 }
@@ -1665,24 +1839,26 @@ impl BovedaApp {
                                 ui.end_row();
                             });
                         ui.add_space(8.0);
+                        // Validación estricta ANTES de procesar: el botón sólo se
+                        // habilita con datos válidos y el motivo se explica aquí.
+                        let verdict = validate_new_user(&st.0, &st.1, &st.3, &st.4);
+                        if let Err(why) = &verdict {
+                            ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA5, 0x2F), why);
+                        }
                         ui.horizontal(|ui| {
                             if ui.button("Cancelar").clicked() {
                                 self.modal = Modal::None;
                             }
-                            if ui.button(egui::RichText::new("Crear").strong()).clicked() {
-                                if st.0.trim().is_empty() {
-                                    self.toast(ToastKind::Warn, "Indique el usuario");
-                                } else if st.3.len() < 6 || st.3 != st.4 {
-                                    self.toast(
-                                        ToastKind::Warn,
-                                        "El PIN debe tener 6 caracteres o más y coincidir",
-                                    );
-                                } else {
-                                    let (u, d, r, p) =
-                                        (st.0.clone(), st.1.clone(), st.2, st.3.clone());
-                                    self.it_add_user(&u, &d, r, &p);
-                                    self.modal = Modal::None;
+                            let crear = ui.add_enabled(
+                                verdict.is_ok(),
+                                egui::Button::new(egui::RichText::new("Crear").strong()),
+                            );
+                            if crear.clicked() {
+                                if let Ok(usuario) = &verdict {
+                                    let (d, r, p) = (st.1.trim().to_string(), st.2, st.3.clone());
+                                    self.it_add_user(usuario, &d, r, &p);
                                 }
+                                self.modal = Modal::None;
                             }
                         });
                     });
@@ -1695,7 +1871,7 @@ impl BovedaApp {
                 pin,
                 pin2,
             } => {
-                if !self.privileged_active() {
+                if !self.it_screen_allowed() {
                     self.modal = Modal::None;
                     return;
                 }
@@ -1720,21 +1896,23 @@ impl BovedaApp {
                                 .desired_width(260.0),
                         );
                         ui.add_space(8.0);
+                        // Validación estricta antes de procesar el cambio de PIN.
+                        let verdict = validate_pin_pair(&st.0, &st.1);
+                        if let Err(why) = &verdict {
+                            ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA5, 0x2F), why);
+                        }
                         ui.horizontal(|ui| {
                             if ui.button("Cancelar").clicked() {
                                 self.modal = Modal::None;
                             }
-                            if ui.button(egui::RichText::new("Guardar").strong()).clicked() {
-                                if st.0.len() < 6 || st.0 != st.1 {
-                                    self.toast(
-                                        ToastKind::Warn,
-                                        "El PIN debe tener 6 caracteres o más y coincidir",
-                                    );
-                                } else {
-                                    let (u, p) = (username.clone(), st.0.clone());
-                                    self.it_set_pin(&u, &p);
-                                    self.modal = Modal::None;
-                                }
+                            let guardar = ui.add_enabled(
+                                verdict.is_ok(),
+                                egui::Button::new(egui::RichText::new("Guardar").strong()),
+                            );
+                            if guardar.clicked() {
+                                let (u, p) = (username.clone(), st.0.clone());
+                                self.it_set_pin(&u, &p);
+                                self.modal = Modal::None;
                             }
                         });
                     });
@@ -1902,34 +2080,6 @@ fn nav_item(ui: &mut egui::Ui, screen: &mut Screen, target: Screen, icon: &str, 
     }
 }
 
-/// Selector gráfico de archivo (diálogo nativo del sistema). Sin consola.
-fn rfd_pick_file() -> Option<PathBuf> {
-    // eframe no trae diálogos nativos; usamos el diálogo del SO via zenity/kdialog
-    // solo si existen; si no, entrada manual modal (sigue siendo 100 % gráfica).
-    for (bin, args) in [
-        (
-            "zenity",
-            vec!["--file-selection", "--title=Importar documento"],
-        ),
-        (
-            "kdialog",
-            vec!["--getopenfilename", ".", "--title", "Importar documento"],
-        ),
-    ] {
-        if which(bin) {
-            if let Ok(out) = std::process::Command::new(bin).args(args).output() {
-                if out.status.success() {
-                    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    if !p.is_empty() {
-                        return Some(PathBuf::from(p));
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Acción disponible en la pantalla de administración de usuarios.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ItAction {
@@ -2019,18 +2169,36 @@ fn now_epoch() -> u64 {
         .unwrap_or(0)
 }
 
-fn which(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|p| {
-            std::env::split_paths(&p).any(|dir| {
-                let candidate = dir.join(bin);
-                candidate.is_file()
-            })
-        })
-        .unwrap_or(false)
-}
 /// Arranca la aplicación gráfica (punto de entrada para bins).
-pub fn run_gui() -> Result<(), eframe::Error> {
+///
+/// `options.it_mode` sólo llega a [`ItMode::ConsoleLaunched`] desde el binario,
+/// que lo activa únicamente con el argumento `--ITA`.
+pub fn run_gui(options: GuiOptions) -> Result<(), eframe::Error> {
+    // 0) endurecimiento del proceso (Linux): la lectura queda libre —importar
+    //    exige leer de cualquier carpeta del usuario— pero la ESCRITURA se
+    //    confina a la bóveda y a su staging. No es fatal si el kernel no lo
+    //    soporta: se avisa y se continúa.
+    if options.landlock {
+        // Toda la instalación vive bajo `~/.boveda/`: se concede escritura a esa
+        // raíz (bóveda, base de datos, PKI, TSA, reportes) y a nada más. Se crea
+        // antes porque Landlock no puede conceder acceso a algo que todavía no
+        // existe en el sistema de archivos.
+        let base = BovedaApp::default_data_dir();
+        if base.is_absolute() {
+            let _ = std::fs::create_dir_all(&base);
+            match vault_fs::apply_landlock_write_only(&[base.as_path()]) {
+                Ok(()) => tracing::info!(
+                    "Landlock: la escritura de la aplicación queda confinada a {}",
+                    base.display()
+                ),
+                Err(e) => {
+                    tracing::warn!("Landlock no aplicado ({e}); se continúa sin confinamiento")
+                }
+            }
+        } else {
+            tracing::warn!("sin HOME definido: no se confina la escritura de un proceso");
+        }
+    }
     // 1) reportes de fallo: claves + hook de pánico ANTES de cualquier otra cosa
     //    (mismo layout que vaultd: ~/.boveda/data/{door,config,crash})
     let data_dir = BovedaApp::default_data_dir().join("data");
@@ -2041,7 +2209,7 @@ pub fn run_gui() -> Result<(), eframe::Error> {
             .install_panic_hook();
     }
     // 2) ventana
-    let options = eframe::NativeOptions {
+    let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 680.0])
             .with_min_inner_size([720.0, 480.0])
@@ -2050,8 +2218,8 @@ pub fn run_gui() -> Result<(), eframe::Error> {
     };
     eframe::run_native(
         "Bóveda académica",
-        options,
-        Box::new(|cc| Ok(Box::new(BovedaApp::new(cc)))),
+        native,
+        Box::new(move |cc| Ok(Box::new(BovedaApp::new(cc, options)))),
     )
 }
 
@@ -2073,6 +2241,9 @@ mod tests {
             session: None,
             tsa: None,
             read_only: false,
+            // Como en producción: sin `--ITA` las pantallas de administración
+            // no existen. Los tests que las ejercitan lo activan a propósito.
+            it_mode: ItMode::Disabled,
             screen: Screen::Login,
             modal: Modal::None,
             boot_pin: String::new(),
@@ -2364,49 +2535,152 @@ mod tests {
             .any(|t| t.kind == ToastKind::Warn && t.text.contains("Modo consulta")));
     }
 
-    /// La pantalla de usuarios solo vive con la sesión de administración
-    /// vigente y NUNCA escribe en la cadena de auditoría.
+    /// La pantalla de usuarios sólo vive con la administración habilitada
+    /// (`--ITA`) y una sesión vigente, y NUNCA mueve el hash de cabeza de la
+    /// cadena de auditoría.
     #[test]
     fn administration_screen_requires_session_and_leaves_no_audit_trace() {
         let (mut app, _dir) = bootstrapped_app();
         let session_path = app.data_dir.join("data/door/session");
+        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
 
-        // sin sesión no hay administración
-        assert!(!app.privileged_active());
-        let before = app.roles.as_ref().unwrap().db().audit().len();
+        // 1) Con sesión vigente pero SIN `--ITA`: la administración no existe y
+        //    las operaciones se rechazan aunque se invoquen directamente.
+        std::fs::write(&session_path, (now_epoch() + 900).to_string()).unwrap();
+        assert!(app.privileged_active());
+        assert!(app.privileged_remaining().unwrap() > 800);
+        assert!(!app.it_screen_allowed());
+
+        let head_antes = app.roles.as_ref().unwrap().db().audit_head();
+        let len_antes = app.roles.as_ref().unwrap().db().audit_len();
+        app.it_add_user("colado", "Intruso", Role::Director, "abcdef");
         app.it_toggle_user("docente");
         app.it_set_pin("docente", "999999");
-        // (aunque se invoque sin sesión, no audita: el invariante es de la
-        // cadena, y las acciones de la pantalla se bloquean en la interfaz)
-        assert_eq!(app.roles.as_ref().unwrap().db().audit().len(), before); // la marca de sesión la escribe la consola, no la app
-        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        assert!(
+            app.roles
+                .as_ref()
+                .unwrap()
+                .db()
+                .find_user("colado")
+                .is_none(),
+            "sin --ITA no se crea ningún usuario"
+        );
+        assert_eq!(app.roles.as_ref().unwrap().db().audit_head(), head_antes);
+
+        // 2) Con `--ITA` y sesión vigente: la administración opera…
+        app.it_mode = ItMode::ConsoleLaunched;
+        assert!(app.it_screen_allowed());
+        assert!(app.it_unavailable_reason().is_none());
+
+        app.it_add_user("nuevo", "Nuevo Docente", Role::Docente, "abcdef");
+        app.it_set_pin("nuevo", "654321");
+        app.it_toggle_user("nuevo");
+        let svc = app.roles.as_ref().unwrap();
+        assert!(
+            svc.db().find_user("nuevo").is_some(),
+            "el alta surte efecto"
+        );
+        assert!(!svc.db().find_user("nuevo").unwrap().enabled);
+
+        // …pero el hash de cabeza de la auditoría NO se mueve: es el invariante
+        // del modo de mantenimiento (auditoría silenciosa).
+        assert_eq!(
+            svc.db().audit_head(),
+            head_antes,
+            "la administración interna no debe tocar la cadena de auditoría"
+        );
+        assert_eq!(svc.db().audit_len(), len_antes);
+        assert!(svc.db().verify_audit_chain().is_ok());
+
+        // 3) Una sesión caducada (o revocada) cierra la pantalla al instante.
+        app.it_close_session();
+        assert!(!app.privileged_active());
+        assert!(!app.it_screen_allowed());
+        assert!(!session_path.exists());
         std::fs::write(&session_path, now_epoch().saturating_sub(5).to_string()).unwrap();
         assert!(
             !app.privileged_active(),
             "una marca caducada no abre sesión"
         );
+        assert!(!app.it_screen_allowed());
+        let _ = std::fs::remove_file(&session_path);
+    }
+
+    /// El modo de administración sólo se habilita con `--ITA`; el valor por
+    /// defecto no expone ni el aviso de sesión privilegiada.
+    #[test]
+    fn it_mode_defaults_to_disabled_and_requires_the_argument() {
+        assert_eq!(ItMode::default(), ItMode::Disabled);
+        assert!(!ItMode::default().is_console_launched());
+        assert!(ItMode::ConsoleLaunched.is_console_launched());
+        let defaults = GuiOptions::default();
+        assert_eq!(defaults.it_mode, ItMode::Disabled);
+        assert!(defaults.landlock, "el confinamiento va activo por defecto");
+
+        let (mut app, _dir) = bootstrapped_app();
+        let session_path = app.data_dir.join("data/door/session");
+        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
         std::fs::write(&session_path, (now_epoch() + 900).to_string()).unwrap();
-        assert!(app.privileged_active());
-        assert!(app.privileged_remaining().unwrap() > 800);
 
-        // alta, cambio de PIN y deshabilitado: sin rastro en la auditoría
-        app.it_add_user("nuevo", "Nuevo Docente", Role::Docente, "abcdef");
-        app.it_set_pin("nuevo", "654321");
-        app.it_toggle_user("nuevo");
+        // Sesión vigente, pero sin --ITA → denegado.
+        assert!(!app.it_screen_allowed());
         assert_eq!(
-            app.roles.as_ref().unwrap().db().audit().len(),
-            before,
-            "la administración interna no debe auditarse"
+            app.it_unavailable_reason(),
+            Some("La administración no está habilitada en esta ejecución.")
         );
-        // pero surte efecto
-        let svc = app.roles.as_ref().unwrap();
-        assert!(svc.db().find_user("nuevo").is_some());
-        assert!(!svc.db().find_user("nuevo").unwrap().enabled);
 
-        // cerrar la sesión la deja sin efecto de inmediato
+        // Con --ITA pero sin sesión → también denegado.
+        app.it_mode = ItMode::ConsoleLaunched;
         app.it_close_session();
-        assert!(!app.privileged_active());
-        assert!(!session_path.exists());
+        assert!(!app.it_screen_allowed());
+        assert_eq!(
+            app.it_unavailable_reason(),
+            Some("Se requiere una sesión de administración vigente.")
+        );
+    }
+
+    /// Validación estricta antes de procesar: usuarios, nombre visible y PIN.
+    #[test]
+    fn user_and_pin_validation_is_strict() {
+        // Válidos (el usuario se normaliza a minúsculas y sin espacios).
+        assert_eq!(validate_username("  Docente_1 ").unwrap(), "docente_1");
+        assert_eq!(validate_username("a.b-c").unwrap(), "a.b-c");
+        assert_eq!(validate_username(&"a".repeat(32)).unwrap().len(), 32);
+        // Inválidos.
+        assert!(validate_username("").is_err(), "vacío");
+        assert!(validate_username("ab").is_err(), "demasiado corto");
+        assert!(
+            validate_username(&"a".repeat(33)).is_err(),
+            "demasiado largo"
+        );
+        assert!(validate_username("con espacio").is_err(), "espacio");
+        assert!(validate_username("ñandu").is_err(), "no ASCII");
+        assert!(validate_username(".oculto").is_err(), "empieza por punto");
+        assert!(validate_username("usuario-").is_err(), "termina en guion");
+        assert!(
+            validate_username("a;rm -rf").is_err(),
+            "caracteres hostiles"
+        );
+
+        assert_eq!(validate_display_name("  Ana Gómez ").unwrap(), "Ana Gómez");
+        assert!(validate_display_name("   ").is_err());
+        assert!(validate_display_name(&"n".repeat(81)).is_err());
+
+        assert!(validate_pin("12345").is_err(), "5 caracteres");
+        assert!(validate_pin("123456").is_ok());
+        assert!(validate_pin(&"9".repeat(129)).is_err());
+        assert!(validate_pin_pair("123456", "123457").is_err());
+        assert!(validate_pin_pair("123456", "123456").is_ok());
+
+        assert!(validate_new_user("nuevo", "Nuevo Docente", "abcdef", "abcdef").is_ok());
+        assert!(
+            validate_new_user("nuevo", "Nuevo Docente", "abcdef", "abcdeg").is_err(),
+            "los PIN deben coincidir"
+        );
+        assert!(
+            validate_new_user("x", "Nuevo Docente", "abcdef", "abcdef").is_err(),
+            "usuario demasiado corto"
+        );
     }
 
     /// El selector propio lista carpetas y archivos, ignora lo oculto y filtra.

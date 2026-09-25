@@ -24,6 +24,11 @@ fn main() {
     let cmd = args[0].clone();
     let rest = &args[1..];
 
+    // Endurecimiento (Linux): el cliente sólo puede ESCRIBIR en su carpeta de
+    // identidad. La lectura queda libre porque `upload` debe poder leer el
+    // documento indicado esté donde esté.
+    confine_writes();
+
     let code = match cmd.as_str() {
         "pair" => cmd_pair(rest),
         "ping" => cmd_ping(rest),
@@ -58,6 +63,31 @@ fn print_usage_and_exit() -> ! {
 fn fail(msg: &str) -> ! {
     eprintln!("error: {msg}");
     std::process::exit(1);
+}
+
+/// Confina la ESCRITURA del cliente a su carpeta de identidad (Linux; en otros
+/// sistemas no hace nada).
+///
+/// La carpeta se crea antes porque Landlock no puede conceder acceso a una ruta
+/// que todavía no existe. Un fallo no es fatal: el comando sigue adelante sin
+/// confinamiento y se avisa por la salida de error.
+fn confine_writes() {
+    #[cfg(unix)]
+    {
+        let dir = identity_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("aviso: no se pudo preparar {}: {e}", dir.display());
+            return;
+        }
+        let abs = std::fs::canonicalize(&dir).unwrap_or(dir);
+        if let Err(e) = vault_fs::apply_landlock_write_only(&[abs.as_path()]) {
+            eprintln!("aviso: confinamiento de escritura no aplicado: {e}");
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = identity_dir();
+    }
 }
 
 fn identity_dir() -> PathBuf {

@@ -5,6 +5,7 @@
 //! - Búsqueda compuesta estilo "categoria:Tesis AND departamento:\"Ingeniería\" AND año:2026".
 
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::Path;
 use vault_core::{Category, Document, IntegrityStatus};
 use vault_store::VaultDb;
@@ -108,19 +109,316 @@ filename_contains = ["diagrama", "presentacion", "presentación", "poster"]
 // Extracción de texto
 // ---------------------------------------------------------------------------
 
-/// Extrae texto indexable de un archivo (primeras `max_pages` páginas de PDF).
-/// Para imágenes intenta OCR con tesseract si está instalado (mejor esfuerzo).
+/// Tope de texto indexable por documento (1 MiB).
+///
+/// Acota el crecimiento de la base cifrada ante contenedores enormes sin
+/// perder capacidad de búsqueda: lo que se indexa es el contenido, no el
+/// archivo completo.
+pub const MAX_INDEXED_TEXT: usize = 1024 * 1024;
+
+/// Extrae texto indexable de un archivo, **desde Word hasta PDF**:
+///
+/// - `pdf` (lopdf, primeras `max_pages` páginas)
+/// - `docx` / `xlsx` / `pptx` (contenedor ZIP + XML de Office moderno)
+/// - `odt` / `ods` / `odp` (OpenDocument)
+/// - `rtf` y `.doc` / `.xls` / `.ppt` (binario antiguo, mejor esfuerzo)
+/// - texto plano y marcado (`txt`, `md`, `csv`, `json`, `xml`, `log`…)
+/// - imágenes: OCR con `tesseract` si está instalado (mejor esfuerzo)
+///
+/// Nunca falla: un archivo ilegible o de un formato desconocido devuelve texto
+/// vacío, y el resultado se acota a [`MAX_INDEXED_TEXT`].
 pub fn extract_text(path: &Path, max_pages: usize) -> String {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    match ext.as_str() {
+    let text = match ext.as_str() {
+        // PDF: extracción por páginas (lopdf)
         "pdf" => extract_pdf_text(path, max_pages).unwrap_or_default(),
+        // Imágenes: OCR best-effort con tesseract si existe
         "jpg" | "jpeg" | "png" | "webp" | "heic" => ocr_best_effort(path),
-        "txt" | "md" | "csv" | "toml" | "json" => std::fs::read_to_string(path).unwrap_or_default(),
+        // Texto plano y marcado: legible directamente
+        "txt" | "md" | "csv" | "tsv" | "toml" | "json" | "xml" | "yml" | "yaml" | "log" => {
+            std::fs::read_to_string(path).unwrap_or_default()
+        }
+        // Office moderno: contenedor ZIP con el texto en partes XML conocidas
+        "docx" => extract_office_text(path, OfficeKind::Docx),
+        "xlsx" => extract_office_text(path, OfficeKind::Xlsx),
+        "pptx" => extract_office_text(path, OfficeKind::Pptx),
+        // OpenDocument (.odt/.ods/.odp): mismo contenedor, `content.xml`
+        "odt" | "ods" | "odp" => extract_office_text(path, OfficeKind::Odf),
+        // RTF: texto entre palabras de control
+        "rtf" => rtf_to_text(path),
+        // Office binario antiguo (OLE): utilidades clásicas si están instaladas
+        "doc" | "xls" | "ppt" => legacy_office_text(path),
         _ => String::new(),
+    };
+    truncate_on_char_boundary(text, MAX_INDEXED_TEXT)
+}
+
+/// Contenedores OOXML/ODF: qué partes llevan el texto legible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OfficeKind {
+    /// Word: documento principal, encabezados, pies y notas.
+    Docx,
+    /// Excel: tabla de cadenas compartidas y hojas.
+    Xlsx,
+    /// PowerPoint: diapositivas y notas del orador.
+    Pptx,
+    /// OpenDocument: `content.xml`.
+    Odf,
+}
+
+impl OfficeKind {
+    /// ¿Esta parte del contenedor contiene texto indexable?
+    fn matches(self, name: &str) -> bool {
+        match self {
+            OfficeKind::Docx => {
+                matches!(
+                    name,
+                    "word/document.xml" | "word/footnotes.xml" | "word/endnotes.xml"
+                ) || (name.ends_with(".xml")
+                    && (name.starts_with("word/header") || name.starts_with("word/footer")))
+            }
+            OfficeKind::Xlsx => {
+                name == "xl/sharedStrings.xml"
+                    || (name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml"))
+            }
+            OfficeKind::Pptx => {
+                name.ends_with(".xml")
+                    && (name.starts_with("ppt/slides/slide")
+                        || name.starts_with("ppt/notesSlides/notesSlide"))
+            }
+            OfficeKind::Odf => name == "content.xml",
+        }
     }
+}
+
+/// Extrae y concatena el texto de las partes XML que pide `kind`.
+///
+/// Un contenedor corrupto, protegido con contraseña o sin las partes esperadas
+/// devuelve texto vacío (nunca un pánico).
+fn extract_office_text(path: &Path, kind: OfficeKind) -> String {
+    let Ok(file) = std::fs::File::open(path) else {
+        tracing::debug!(path = %path.display(), "no se pudo abrir el contenedor Office");
+        return String::new();
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        tracing::debug!(
+            path = %path.display(),
+            "contenedor Office ilegible (¿corrupto o cifrado?); se indexa sin texto"
+        );
+        return String::new();
+    };
+    let mut names: Vec<String> = zip
+        .file_names()
+        .filter(|n| kind.matches(n))
+        .map(|n| n.to_string())
+        .collect();
+    if names.is_empty() {
+        tracing::debug!(path = %path.display(), "contenedor sin las partes XML esperadas");
+        return String::new();
+    }
+    // Orden natural: `sheet2` antes que `sheet10` (y el documento principal primero).
+    names.sort_by_cached_key(|n| natural_key(n));
+
+    let mut out = String::new();
+    for name in names {
+        if out.len() >= MAX_INDEXED_TEXT {
+            break;
+        }
+        let Ok(mut entry) = zip.by_name(&name) else {
+            continue;
+        };
+        let mut xml = String::new();
+        if entry.read_to_string(&mut xml).is_err() {
+            continue;
+        }
+        push_limited(&mut out, &xml_to_text(&xml));
+    }
+    out
+}
+
+/// Convierte XML de Office/OpenDocument en texto plano: quita las etiquetas,
+/// decodifica las entidades básicas y normaliza los espacios.
+fn xml_to_text(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len() / 4);
+    let mut in_tag = false;
+    let mut chars = xml.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' '); // frontera entre dos nodos de texto
+            }
+            '&' if !in_tag => {
+                let mut ent = String::new();
+                while let Some(&n) = chars.peek() {
+                    if n == ';' || ent.len() > 8 {
+                        break;
+                    }
+                    ent.push(n);
+                    chars.next();
+                }
+                if chars.peek() == Some(&';') {
+                    chars.next();
+                }
+                out.push_str(match ent.as_str() {
+                    "amp" => "&",
+                    "lt" => "<",
+                    "gt" => ">",
+                    "quot" => "\"",
+                    "apos" => "'",
+                    _ => " ",
+                });
+            }
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    collapse_ws(&out)
+}
+
+/// Rich Text Format: descarta grupos y palabras de control conservando el texto
+/// legible — suficiente para que la búsqueda por contenido lo encuentre.
+fn rtf_to_text(path: &Path) -> String {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' | '}' => {}
+            '\\' => match chars.peek().copied() {
+                // Carácter escapado: \\ \{ \}
+                Some(next @ ('\\' | '{' | '}')) => {
+                    out.push(next);
+                    chars.next();
+                }
+                // Carácter en hexadecimal: \'e9
+                Some('\'') => {
+                    chars.next();
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        out.push(byte as char);
+                    }
+                }
+                // Palabra de control: se descarta junto con su parámetro
+                _ => {
+                    let mut word = String::new();
+                    while let Some(&n) = chars.peek() {
+                        if n.is_ascii_alphabetic() {
+                            word.push(n);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    while let Some(&n) = chars.peek() {
+                        if n.is_ascii_digit() || n == '-' {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if chars.peek() == Some(&' ') {
+                        chars.next();
+                    }
+                    if matches!(word.as_str(), "par" | "line" | "tab" | "sect" | "page") {
+                        out.push(' ');
+                    }
+                }
+            },
+            '\r' | '\n' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    collapse_ws(&out)
+}
+
+/// Office binario antiguo (`.doc`/`.xls`/`.ppt`, formato OLE compuesto).
+///
+/// No existe un lector puro-Rust razonable, así que se delega en las utilidades
+/// clásicas si están instaladas (mismo criterio best-effort que el OCR).
+fn legacy_office_text(path: &Path) -> String {
+    const CANDIDATES: [(&str, &[&str]); 2] = [("antiword", &["-m", "UTF-8.txt"]), ("catdoc", &[])];
+    for (bin, args) in CANDIDATES {
+        let Ok(out) = std::process::Command::new(bin)
+            .args(args)
+            .arg(path)
+            .output()
+        else {
+            continue; // utilidad no instalada
+        };
+        if !out.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        if !text.trim().is_empty() {
+            return text;
+        }
+    }
+    tracing::debug!(
+        path = %path.display(),
+        "Office binario sin extractor: instale antiword o catdoc para indexarlo"
+    );
+    String::new()
+}
+
+/// Clave de orden natural: separa el prefijo textual, el primer número y el
+/// sufijo, de modo que `sheet2.xml` ordene antes que `sheet10.xml`.
+fn natural_key(name: &str) -> (String, u32, String) {
+    let stem = name.trim_end_matches(".xml");
+    match stem.find(|c: char| c.is_ascii_digit()) {
+        None => (stem.to_string(), 0, String::new()),
+        Some(i) => {
+            let rest = &stem[i..];
+            let ndigits = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            (
+                stem[..i].to_string(),
+                rest[..ndigits].parse::<u32>().unwrap_or(0),
+                rest[ndigits..].to_string(),
+            )
+        }
+    }
+}
+
+/// Añade `src` a `dst` sin pasar de [`MAX_INDEXED_TEXT`], respetando las
+/// fronteras de carácter UTF-8.
+fn push_limited(dst: &mut String, src: &str) {
+    if src.is_empty() || dst.len() >= MAX_INDEXED_TEXT {
+        return;
+    }
+    if !dst.is_empty() {
+        dst.push(' ');
+    }
+    let room = MAX_INDEXED_TEXT.saturating_sub(dst.len());
+    let mut end = src.len().min(room);
+    while end > 0 && !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    dst.push_str(&src[..end]);
+}
+
+/// Recorta `s` a `max` bytes sin partir un carácter UTF-8.
+fn truncate_on_char_boundary(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
+    }
+    let mut cut = max;
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    s[..cut].to_string()
+}
+
+/// Colapsa toda racha de espacios en blanco en un único espacio.
+fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn extract_pdf_text(path: &Path, max_pages: usize) -> Option<String> {
@@ -510,5 +808,247 @@ filename_contains = ["proyecto_final"]
             .as_bytes(),
         );
         out
+    }
+
+    // ---------------- Indexado de Office (Word/Excel/PowerPoint/ODF) ----------------
+
+    /// Construye un contenedor ZIP con las partes indicadas, como los que
+    /// producen Word, Excel, PowerPoint y LibreOffice.
+    fn office_zip(parts: &[(&str, &str)]) -> Vec<u8> {
+        use std::io::Write;
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut buf);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for (name, body) in parts {
+                zw.start_file(*name, opts).unwrap();
+                zw.write_all(body.as_bytes()).unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    #[test]
+    fn xml_becomes_plain_text() {
+        assert_eq!(
+            xml_to_text("<w:t>Acta &amp; anexo &quot;A&quot;</w:t><w:t>2026</w:t>"),
+            "Acta & anexo \"A\" 2026"
+        );
+        assert_eq!(xml_to_text("<a>uno</a><b>dos</b>"), "uno dos");
+        assert_eq!(xml_to_text("<a><b/></a>"), "");
+    }
+
+    #[test]
+    fn natural_order_is_numeric_not_lexicographic() {
+        let mut names = vec![
+            "ppt/slides/slide10.xml".to_string(),
+            "ppt/slides/slide2.xml".to_string(),
+            "ppt/slides/slide1.xml".to_string(),
+        ];
+        names.sort_by_cached_key(|n| natural_key(n));
+        assert_eq!(
+            names,
+            vec![
+                "ppt/slides/slide1.xml",
+                "ppt/slides/slide2.xml",
+                "ppt/slides/slide10.xml"
+            ]
+        );
+    }
+
+    /// Word: el contenido del `.docx` se extrae (documento + encabezado) y la
+    /// búsqueda por contenido lo encuentra.
+    #[test]
+    fn docx_content_is_indexed_and_searchable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tesis.docx");
+        std::fs::write(
+            &path,
+            office_zip(&[
+                ("[Content_Types].xml", "<Types/>"),
+                (
+                    "word/document.xml",
+                    "<?xml version=\"1.0\"?><w:document><w:body>\
+                     <w:p><w:r><w:t>Estudio sobre la penicilina</w:t></w:r></w:p>\
+                     <w:p><w:r><w:t>resistente de 2026</w:t></w:r></w:p>\
+                     </w:body></w:document>",
+                ),
+                (
+                    "word/header1.xml",
+                    "<w:hdr><w:t>Universidad Nacional</w:t></w:hdr>",
+                ),
+                ("word/media/imagen.png", "binario-irrelevante"),
+            ]),
+        )
+        .unwrap();
+
+        let text = extract_text(&path, 10);
+        assert!(text.contains("penicilina"), "texto extraído: {text}");
+        assert!(text.contains("2026"), "texto extraído: {text}");
+        assert!(
+            text.contains("Universidad Nacional"),
+            "el encabezado también se indexa: {text}"
+        );
+        assert!(
+            !text.contains("binario-irrelevante"),
+            "los recursos binarios no se indexan: {text}"
+        );
+    }
+
+    /// Excel, PowerPoint y OpenDocument: también se extrae su texto.
+    #[test]
+    fn xlsx_pptx_and_odt_content_is_indexed() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let xlsx = dir.path().join("notas.xlsx");
+        std::fs::write(
+            &xlsx,
+            office_zip(&[
+                (
+                    "xl/sharedStrings.xml",
+                    "<sst><si><t>calificaciones finales</t></si></sst>",
+                ),
+                (
+                    "xl/worksheets/sheet1.xml",
+                    "<worksheet><sheetData><row><c><v>penicilina</v></c></row></sheetData></worksheet>",
+                ),
+            ]),
+        )
+        .unwrap();
+        let t = extract_text(&xlsx, 10);
+        assert!(t.contains("calificaciones finales"), "xlsx: {t}");
+        assert!(t.contains("penicilina"), "xlsx: {t}");
+
+        let pptx = dir.path().join("clase.pptx");
+        std::fs::write(
+            &pptx,
+            office_zip(&[
+                (
+                    "ppt/slides/slide1.xml",
+                    "<p:sld><a:t>Introducción al laboratorio</a:t></p:sld>",
+                ),
+                (
+                    "ppt/slides/slide10.xml",
+                    "<p:sld><a:t>Conclusiones del curso</a:t></p:sld>",
+                ),
+            ]),
+        )
+        .unwrap();
+        let t = extract_text(&pptx, 10);
+        assert!(t.contains("Introducción al laboratorio"), "pptx: {t}");
+        assert!(t.contains("Conclusiones del curso"), "pptx: {t}");
+
+        let odt = dir.path().join("acta.odt");
+        std::fs::write(
+            &odt,
+            office_zip(&[(
+                "content.xml",
+                "<office:document-content><text:p>Acta de reunión</text:p>\
+                 <text:p>tema: penicilina</text:p></office:document-content>",
+            )]),
+        )
+        .unwrap();
+        let t = extract_text(&odt, 10);
+        assert!(t.contains("Acta de reunión"), "odt: {t}");
+        assert!(t.contains("penicilina"), "odt: {t}");
+    }
+
+    /// RTF: se conserva el texto legible y se descartan los grupos de control.
+    #[test]
+    fn rtf_control_words_are_stripped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nota.rtf");
+        std::fs::write(
+            &path,
+            r"{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}\fs24 Estudio sobre la penicilina\par resistente\'20de 2026}",
+        )
+        .unwrap();
+        let text = extract_text(&path, 10);
+        assert!(text.contains("penicilina"), "rtf: {text}");
+        assert!(text.contains("resistente"), "rtf: {text}");
+        assert!(!text.contains("fonttbl"), "sin palabras de control: {text}");
+        assert!(!text.contains("rtf1"), "sin palabras de control: {text}");
+    }
+
+    /// Un contenedor corrupto, vacío o sin las partes esperadas devuelve texto
+    /// vacío sin pánicos (el documento sigue entrando en la bóveda).
+    #[test]
+    fn malformed_office_files_never_panic() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let basura = dir.path().join("corrupto.docx");
+        std::fs::write(&basura, b"esto no es un zip").unwrap();
+        assert_eq!(extract_text(&basura, 10), "");
+
+        let vacio = dir.path().join("vacio.docx");
+        std::fs::write(&vacio, office_zip(&[("docProps/app.xml", "<Properties/>")])).unwrap();
+        assert_eq!(
+            extract_text(&vacio, 10),
+            "",
+            "sin word/document.xml no hay texto"
+        );
+
+        let inexistente = dir.path().join("no-existe.xlsx");
+        assert_eq!(extract_text(&inexistente, 10), "");
+
+        let rtf_roto = dir.path().join("roto.rtf");
+        std::fs::write(&rtf_roto, b"{\\rtf1 \\u9999 inacabado").unwrap();
+        let _ = extract_text(&rtf_roto, 10); // no debe entrar en pánico
+    }
+
+    /// Lazo completo: un `.docx` sellado en la bóveda se encuentra por su
+    /// contenido con `texto:` — el mismo camino que un PDF.
+    #[test]
+    fn sealed_docx_is_found_by_content_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let kf = [9u8; 64];
+        let layout = vault_fs::VaultLayout::new(dir.path().join("vault"));
+        layout.init(&["Profesor Uno".to_string()]).unwrap();
+        let mut db = VaultDb::open(&dir.path().join("db"), &kf).unwrap();
+
+        let mut doc = Document {
+            vault_id: vault_core::new_id(),
+            sha256: "cc".repeat(32),
+            blake3: "dd".repeat(32),
+            size_bytes: 0,
+            meta: DocumentMeta {
+                title: "informe".into(),
+                category: Category::ExpedienteProfesor,
+                author: "Profesor Uno".into(),
+                id_number: None,
+                department: "Ingeniería".into(),
+                registered_at: vault_core::now_rfc3339(),
+                academic_year: Some(2026),
+                file_name: "informe.docx".into(),
+                extension: "docx".into(),
+            },
+            rel_path: String::new(),
+            rfc3161_token: None,
+            rfc3161_time: None,
+            integrity: IntegrityStatus::Ok,
+            origin_device: None,
+        };
+        doc.rel_path = layout.rel_path_for(&doc.meta.author, &doc);
+        let content = office_zip(&[(
+            "word/document.xml",
+            "<w:document><w:body><w:t>informe sobre la penicilina de 2026</w:t></w:body></w:document>",
+        )]);
+        layout.install_sealed(&doc.rel_path, &content).unwrap();
+        db.add_document(doc.clone());
+
+        // sin indexar no se encuentra; tras indexar, sí
+        assert!(search(&db, &SearchQuery::parse("texto:penicilina")).is_empty());
+        index_document(&mut db, &layout, &doc);
+        let found = search(&db, &SearchQuery::parse("texto:penicilina"));
+        assert_eq!(found.len(), 1, "el .docx debe encontrarse por su contenido");
+        assert_eq!(found[0].vault_id, doc.vault_id);
+        // y la búsqueda compuesta por metadatos + contenido también
+        let compuesta = search(
+            &db,
+            &SearchQuery::parse("extension:docx AND texto:penicilina AND año:2026"),
+        );
+        assert_eq!(compuesta.len(), 1);
     }
 }

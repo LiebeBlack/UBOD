@@ -14,14 +14,12 @@
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
-use p256::ecdsa::{Signature as FixedSig, VerifyingKey};
+use p256::ecdsa::VerifyingKey;
 use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use p256::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-#[allow(unused_imports)]
-use FixedSig as _FixedSigAlias;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrashError {

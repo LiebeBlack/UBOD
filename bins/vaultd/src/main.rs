@@ -402,10 +402,11 @@ fn main() {
     let mut config_path = dirs_home().join(".boveda").join("vaultd.toml");
     let mut init_pin: Option<String> = None;
     let mut quickstart: Option<String> = None;
-    // Endurecimiento opcional: el daemon solo podrá leer la bóveda y escribir
-    // en staging (Landlock, Linux). Opt-in porque algunos kernels antiguos o
-    // entornos en contenedor no lo soportan.
-    let mut landlock = false;
+    // Endurecimiento por defecto: el daemon sólo podrá leer la bóveda y
+    // escribir en staging (Landlock, Linux). Se desactiva con `--no-landlock`
+    // para kernels antiguos o entornos en contenedor que no lo soportan; si la
+    // activación falla se avisa y el servicio continúa.
+    let mut landlock = true;
     let args = &mut arg_iter;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -417,6 +418,9 @@ fn main() {
             }
             "--landlock" => {
                 landlock = true;
+            }
+            "--no-landlock" => {
+                landlock = false;
             }
             "--quickstart" => {
                 // acepta `--quickstart PIN` o solo `--quickstart` (PIN aleatorio)
@@ -434,7 +438,11 @@ fn main() {
                 );
                 println!("  --init PIN           solo configura el PIN de administrador y sale");
                 println!("  --config RUTA        archivo de configuración (por defecto ~/.boveda/vaultd.toml)");
-                println!("  --landlock           restringe el acceso al sistema de archivos (Linux, opcional)");
+                println!("  --landlock           fuerza la restricción de acceso al sistema de archivos (Linux)");
+                println!(
+                    "  --no-landlock        no restringe el acceso al sistema de archivos (Linux)"
+                );
+                println!("                       por defecto la restricción SÍ se aplica si el kernel la soporta");
                 println!();
                 println!("Flujo en una sola máquina:");
                 println!(
@@ -536,13 +544,20 @@ async fn async_run(
     let (_mdns_guard, sync_addr) = vault.start_sync().await?;
     tracing::info!("canal de sincronización mTLS en {sync_addr}");
 
-    // Endurecimiento opcional del proceso (Linux): lectura de la bóveda y
-    // escritura solo en staging. Se avisa y se continúa si no es posible.
+    // Endurecimiento del proceso (Linux): el servicio queda confinado a la
+    // bóveda y a `<datos>`; fuera de ahí sólo puede leer los directorios de
+    // sistema imprescindibles. Se avisa y se continúa si el kernel no lo
+    // soporta: la bóveda sigue funcionando sin el sandbox.
     if landlock {
-        let staging = vault.config.vault_root.join(".staging");
-        match vault_fs::apply_landlock(&vault.config.vault_root, &staging) {
-            Ok(()) => tracing::info!("landlock activado (lectura de bóveda, escritura en staging)"),
-            Err(e) => tracing::warn!("landlock no aplicado: {e}"),
+        // Las rutas deben existir ANTES de aplicar las reglas: Landlock no puede
+        // conceder acceso a algo que todavía no está en el sistema de archivos.
+        let _ = std::fs::create_dir_all(&vault.config.vault_root);
+        let _ = std::fs::create_dir_all(&vault.config.data_dir);
+        match vault_fs::apply_landlock(&vault.config.vault_root, &vault.config.data_dir) {
+            Ok(()) => tracing::info!("landlock activado: sólo la bóveda y <datos> son escribibles"),
+            Err(e) => {
+                tracing::warn!("landlock no aplicado ({e}); el servicio continúa sin confinamiento")
+            }
         }
     }
 

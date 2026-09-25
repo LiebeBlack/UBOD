@@ -77,12 +77,16 @@ fn main() {
 }
 
 fn run(args: &[String]) -> Result<(), ItError> {
-    let data_dir = std::env::var_os("HOME")
+    let base_dir = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".boveda")
-        .join("data");
+        .join(".boveda");
+    // Endurecimiento (Linux): la consola sólo puede ESCRIBIR dentro de la
+    // instalación de la bóveda. La lectura no se restringe: un reporte `.crpt`
+    // o un certificado indicado por ruta pueden estar en cualquier sitio.
+    confine_writes(&base_dir);
+    let data_dir = base_dir.join("data");
     let door = DoorDir(data_dir.join("door"));
 
     match args.first().map(|s| s.as_str()) {
@@ -108,6 +112,37 @@ fn run(args: &[String]) -> Result<(), ItError> {
         other => Err(ItError::Msg(format!(
             "comando desconocido: {other:?} (vea help)"
         ))),
+    }
+}
+
+/// Confina la ESCRITURA de la consola a `base_dir` (Linux; en otros sistemas no
+/// hace nada).
+///
+/// No es fatal: si el kernel no soporta Landlock se avisa y la consola sigue
+/// funcionando, porque las operaciones de administración ya exigen su propia
+/// autenticación (MFA) y la escritura exclusiva de la base de datos.
+fn confine_writes(base_dir: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        if !base_dir.is_absolute() {
+            tracing::warn!("sin HOME definido: no se confina la escritura de la consola");
+            return;
+        }
+        // Landlock no puede conceder acceso a una ruta inexistente.
+        if let Err(e) = std::fs::create_dir_all(base_dir) {
+            tracing::warn!(path = %base_dir.display(), "no se pudo preparar la ruta: {e}");
+            return;
+        }
+        match vault_fs::apply_landlock_write_only(&[base_dir]) {
+            Ok(()) => {
+                tracing::info!(path = %base_dir.display(), "escritura de la consola confinada")
+            }
+            Err(e) => tracing::warn!("landlock no aplicado ({e}); la consola sigue operativa"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = base_dir;
     }
 }
 

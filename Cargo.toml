@@ -94,6 +94,11 @@ thiserror = "2"
 # PDF / indexación (sin chrono/jiff: evitan raw-dylib incompatible con GNU ld)
 lopdf = { version = "0.34", default-features = false, features = ["nom_parser", "rayon"] }
 
+# Contenedores OOXML/ODF para el índice de texto: Word (.docx), Excel (.xlsx),
+# PowerPoint (.pptx) y OpenDocument (.odt/.ods/.odp). Solo descompresión deflate
+# en Rust puro (sin bzip2/zstd/aes ni dependencias nativas).
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
 [profile.release]
 lto = "thin"
 strip = true

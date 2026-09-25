@@ -174,6 +174,31 @@ pub fn seal_document(
     Ok(SealOutcome::Sealed(Box::new(doc)))
 }
 
+/// Carga el ruleset institucional de `<datos>/config/rules.toml`.
+///
+/// El archivo externo permite a la institución ajustar la clasificación sin
+/// recompilar. Si no existe, se usan las reglas embebidas; si existe pero es
+/// ilegible, se avisa y se continúa con las embebidas (nunca se cae el
+/// servicio por un archivo de configuración mal escrito).
+pub fn load_ruleset(data_dir: &std::path::Path) -> vault_index::Ruleset {
+    let path = data_dir.join("config/rules.toml");
+    match vault_index::Ruleset::load(&path) {
+        Ok(rs) => {
+            tracing::info!(path = %path.display(), reglas = rs.rule.len(), "ruleset institucional cargado");
+            rs
+        }
+        Err(e) => {
+            if path.exists() {
+                tracing::warn!(
+                    path = %path.display(),
+                    "ruleset externo ilegible ({e}); se usan las reglas embebidas"
+                );
+            }
+            vault_index::Ruleset::default_ruleset()
+        }
+    }
+}
+
 /// Estado de bloqueo por intentos fallidos (rate-limit exponencial).
 #[derive(Default)]
 struct LockoutState {
@@ -210,6 +235,8 @@ pub struct AdminService {
     db: VaultDb,
     layout: VaultLayout,
     tsa: LocalTsa,
+    /// Ruleset institucional: decide la clasificación en la admisión.
+    ruleset: vault_index::Ruleset,
     pin_lockout: LockoutState,
     destruction_lockout: LockoutState,
     /// Sesiones activas: token -> expiración (epoch).
@@ -225,12 +252,30 @@ impl AdminService {
             db,
             layout,
             tsa,
+            ruleset: vault_index::Ruleset::default_ruleset(),
             pin_lockout: LockoutState::default(),
             destruction_lockout: LockoutState::default(),
             sessions: HashMap::new(),
             pending_destructions: HashMap::new(),
             session_ttl_secs: 15 * 60,
         }
+    }
+
+    /// Instala el ruleset institucional (el que decide la clasificación en la
+    /// admisión). Se encadena sobre [`AdminService::new`].
+    pub fn with_ruleset(mut self, ruleset: vault_index::Ruleset) -> Self {
+        self.ruleset = ruleset;
+        self
+    }
+
+    /// Reglas de clasificación vigentes en el servidor.
+    pub fn ruleset(&self) -> &vault_index::Ruleset {
+        &self.ruleset
+    }
+
+    /// Reemplaza el ruleset en caliente (p. ej. tras editar `rules.toml`).
+    pub fn set_ruleset(&mut self, ruleset: vault_index::Ruleset) {
+        self.ruleset = ruleset;
     }
 
     /// Segundos restantes del bloqueo del PIN de administrador (0 = sin bloqueo).
@@ -421,7 +466,32 @@ impl AdminService {
             )));
         }
 
-        // 2. sellado unificado: instala, sella con TSA, indexa y audita.
+        // 2. clasificación del lado del servidor: el ruleset institucional
+        //    (config/rules.toml) manda sobre lo que declare el dispositivo
+        //    emisor, que no puede elegir la carpeta destino de la bóveda.
+        let mut meta = sub.meta.clone();
+        if let Some(decidida) = self.ruleset.classify(&meta.file_name) {
+            if decidida != meta.category {
+                tracing::info!(
+                    archivo = %meta.file_name,
+                    declarada = ?meta.category,
+                    aplicada = ?decidida,
+                    "categoría reclasificada por el ruleset del servidor"
+                );
+                self.db.append_audit(
+                    actor,
+                    "admit_reclassify",
+                    &sub.sha256,
+                    &format!(
+                        "{:?} -> {:?} (ruleset institucional)",
+                        meta.category, decidida
+                    ),
+                );
+                meta.category = decidida;
+            }
+        }
+
+        // 3. sellado unificado: instala, sella con TSA, indexa y audita.
         //    La deduplicación por contenido vive dentro del sellado.
         match seal_document(
             &mut self.db,
@@ -429,7 +499,7 @@ impl AdminService {
             Some(&self.tsa),
             SealRequest {
                 source: SealSource::StagedFile(&staging_path),
-                meta: sub.meta.clone(),
+                meta,
                 origin_device: Some(sub.device_id.clone()),
                 actor,
                 audit_action: "admit",
@@ -1022,5 +1092,74 @@ mod tests {
         assert!(!staging_file.exists());
         assert!(svc.db().documents().is_empty());
         assert!(svc.pending_submissions().is_empty());
+    }
+
+    /// El ruleset institucional (`config/rules.toml`) manda sobre la categoría
+    /// que declara el dispositivo emisor: nadie elige desde fuera en qué carpeta
+    /// de la bóveda acaba un documento.
+    #[test]
+    fn server_ruleset_overrides_the_declared_category() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("config");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::write(
+            cfg.join("rules.toml"),
+            "[[rule]]\ncategory = \"Evaluacion\"\nfilename_contains = [\"tesis-ing\"]\n",
+        )
+        .unwrap();
+
+        let mut svc = setup(dir.path()).with_ruleset(load_ruleset(dir.path()));
+        svc.set_admin_pin(None, "123456").unwrap();
+
+        // El emisor declara «Tesis»; la institución clasifica «Evaluacion».
+        let (sub, _staging) = make_submission(dir.path());
+        assert_eq!(sub.meta.category, Category::Tesis);
+        svc.db_mut().add_submission(sub.clone());
+
+        let ack = svc.admit(&sub.submission_id, "tester").unwrap();
+        assert_eq!(ack.status, SealStatus::Sealed);
+        let doc = svc.db().find_by_sha256(&sub.sha256).unwrap().clone();
+        assert_eq!(
+            doc.meta.category,
+            Category::Evaluacion,
+            "el ruleset del servidor debe imponerse al emisor"
+        );
+        assert!(
+            doc.rel_path.contains("Evaluacion"),
+            "el documento se archiva según la clasificación institucional: {}",
+            doc.rel_path
+        );
+        // La reclasificación queda registrada y la cadena sigue íntegra.
+        assert!(
+            svc.db()
+                .audit()
+                .iter()
+                .any(|e| e.action == "admit_reclassify"),
+            "la reclasificación debe auditarse"
+        );
+        assert!(svc.db().verify_audit_chain().is_ok());
+        // Y la categoría declarada ya no coincide con la que hay en la bóveda.
+        assert_ne!(doc.meta.category, sub.meta.category);
+    }
+
+    /// Sin `config/rules.toml` entran las reglas embebidas, que también corrigen
+    /// una categoría declarada de forma incorrecta.
+    #[test]
+    fn embedded_ruleset_is_the_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut svc = setup(dir.path()).with_ruleset(load_ruleset(dir.path()));
+        svc.set_admin_pin(None, "123456").unwrap();
+
+        let (mut sub, _staging) = make_submission(dir.path());
+        sub.meta.category = Category::MaterialGrafico; // el emisor declara otra cosa
+        svc.db_mut().add_submission(sub.clone());
+        svc.admit(&sub.submission_id, "tester").unwrap();
+
+        let doc = svc.db().find_by_sha256(&sub.sha256).unwrap();
+        assert_eq!(
+            doc.meta.category,
+            Category::Tesis,
+            "la regla embebida por nombre (tesis*) debe aplicarse"
+        );
     }
 }

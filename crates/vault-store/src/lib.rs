@@ -500,6 +500,35 @@ impl VaultDb {
         &self.state.audit
     }
 
+    /// Número de entradas de la cadena de auditoría.
+    pub fn audit_len(&self) -> usize {
+        self.state.audit.len()
+    }
+
+    /// "Hash de cabeza" (`hashhead`) de la cadena: el `content_hash` de la
+    /// última entrada, o [`AUDIT_GENESIS`] si la cadena está vacía.
+    ///
+    /// Es la huella de integridad de TODO el histórico: comparar este valor
+    /// antes y después de una operación demuestra que la cadena quedó intacta
+    /// (la longitud por sí sola no lo demuestra: reescribir una entrada la
+    /// deja igual de larga pero cambia su hash).
+    pub fn audit_head(&self) -> String {
+        self.state
+            .audit
+            .last()
+            .map(AuditEntry::content_hash)
+            .unwrap_or_else(|| AUDIT_GENESIS.to_string())
+    }
+
+    /// Todas las entradas de auditoría cuyo actor sea `actor`.
+    pub fn audit_of(&self, actor: &str) -> Vec<&AuditEntry> {
+        self.state
+            .audit
+            .iter()
+            .filter(|e| e.actor == actor)
+            .collect()
+    }
+
     /// Verifica la integridad de toda la cadena de auditoría.
     pub fn verify_audit_chain(&self) -> Result<(), String> {
         let mut prev = AUDIT_GENESIS.to_string();
@@ -647,5 +676,92 @@ mod tests {
 
         let db = VaultDb::open(dir.path(), &kf).unwrap();
         assert!(db.verify_audit_chain().is_err());
+    }
+
+    /// El `hashhead` es la huella del histórico completo. La gestión de usuarios
+    /// del modo IT no audita, así que debe dejarlo intacto; una entrada nueva sí
+    /// lo cambia y el encadenado sigue siendo válido.
+    #[test]
+    fn audit_head_untouched_by_non_audited_maintenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let kf = vault_crypto::dbcrypto::generate_keyfile();
+        let mut db = VaultDb::open(dir.path(), &kf).unwrap();
+        assert_eq!(db.audit_head(), AUDIT_GENESIS, "cadena vacía = génesis");
+        assert_eq!(db.audit_len(), 0);
+
+        db.append_audit("sistema", "bootstrap", "vault", "alta inicial");
+        let head = db.audit_head();
+        assert_ne!(head, AUDIT_GENESIS);
+        assert_eq!(db.audit_len(), 1);
+
+        // Mantenimiento de credenciales: alta y baja sin dejar rastro auditado.
+        db.upsert_user(User {
+            username: "nuevo".into(),
+            display_name: "Nuevo Docente".into(),
+            role: vault_core::Role::Docente,
+            pin_hash: "hash-argon2id".into(),
+            created_at: vault_core::now_rfc3339(),
+            last_login: None,
+            enabled: true,
+        });
+        assert!(db.find_user("nuevo").is_some(), "el alta surte efecto");
+        db.remove_user("nuevo");
+        assert!(db.find_user("nuevo").is_none());
+        assert_eq!(db.audit_head(), head, "el mantenimiento no toca la cadena");
+        assert_eq!(db.audit_len(), 1);
+        assert!(db.verify_audit_chain().is_ok());
+
+        // Una entrada nueva sí mueve el hash de cabeza.
+        let head2 = db.append_audit("sistema", "import", "x.pdf", "vía aplicación");
+        assert_ne!(head2, head);
+        assert_eq!(db.audit_head(), head2);
+        assert_eq!(db.audit_len(), 2);
+        assert!(db.verify_audit_chain().is_ok());
+        assert_eq!(db.audit_of("sistema").len(), 2);
+    }
+
+    /// Reescribir la **última** entrada deja la cadena igual de larga y además
+    /// `verify_audit_chain()` sigue respondiendo `Ok`: nada enlaza después de la
+    /// última, así que el enlace no puede delatarla. El `hashhead` sí.
+    ///
+    /// Por eso el invariante de auditoría se comprueba con el hash de cabeza, y
+    /// no solo con la longitud ni con la verificación de la cadena.
+    #[test]
+    fn audit_head_catches_rewriting_of_the_last_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let kf = vault_crypto::dbcrypto::generate_keyfile();
+        let head_antes = {
+            let mut db = VaultDb::open(dir.path(), &kf).unwrap();
+            db.append_audit("admin", "op1", "x", "primera");
+            db.append_audit("admin", "op2", "y", "detalle original");
+            db.flush().unwrap();
+            let head = db.audit_head();
+            assert_eq!(db.audit_len(), 2);
+            assert!(db.verify_audit_chain().is_ok());
+            head
+        };
+
+        // Manipular el blob: descifrar, reescribir la última entrada, recifrar.
+        let blob = std::fs::read(dir.path().join("vault.db.enc")).unwrap();
+        let crypto = DbCrypto::new(&kf);
+        let mut state: DbState =
+            serde_json::from_slice(&crypto.decrypt_blob(&blob).unwrap()).unwrap();
+        state.audit[1].detail = "detalle reescrito".into();
+        let forged = crypto
+            .encrypt_blob(&serde_json::to_vec(&state).unwrap())
+            .unwrap();
+        std::fs::write(dir.path().join("vault.db.enc"), forged).unwrap();
+
+        let db = VaultDb::open(dir.path(), &kf).unwrap();
+        assert_eq!(db.audit_len(), 2, "la longitud no delata la manipulación");
+        assert!(
+            db.verify_audit_chain().is_ok(),
+            "el encadenado por sí solo no ve que se reescribió la última entrada"
+        );
+        assert_ne!(
+            db.audit_head(),
+            head_antes,
+            "el hash de cabeza sí delata la manipulación"
+        );
     }
 }
