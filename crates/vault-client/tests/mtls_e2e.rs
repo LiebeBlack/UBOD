@@ -109,8 +109,11 @@ impl Server {
         rt.spawn(async move {
             let _ = vault_sync::serve("127.0.0.1:0".parse().unwrap(), tls, serving).await;
         });
+        // El temporizador se crea DENTRO del runtime (`block_on` entra en él
+        // sólo al sondear el futuro): fuera de ahí no hay reactor y `timeout`
+        // aborta con «there is no reactor running».
         let addr = rt
-            .block_on(tokio::time::timeout(STARTUP_TIMEOUT, rx))
+            .block_on(async { tokio::time::timeout(STARTUP_TIMEOUT, rx).await })
             .expect("el servidor mTLS no publicó su dirección a tiempo")
             .expect("el servidor debe publicar su dirección");
 
