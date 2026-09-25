@@ -169,6 +169,12 @@ impl Vault {
         let layout = VaultLayout::new(&config.vault_root);
         layout.init(&users)?;
 
+        // La apertura de una bóveda nueva DEBE dejar la BD cifrada en disco
+        // (`data/db/vault.db.enc` es el contrato que comprueba la GUI para
+        // saber si la bóveda existe): sin este volcado inicial el archivo no
+        // aparecería hasta el primer cambio de estado.
+        db.flush()?;
+
         let tsa = LocalTsa::new_persisted(&config.data_dir.join("tsa"))
             .map_err(|e| DaemonError::Crypto(e.to_string()))?;
 
@@ -242,6 +248,9 @@ impl Vault {
             let mut svc = admin_for_pairing.lock().unwrap();
             svc.pair_device(device_id, fingerprint, "vaultd").ok();
         }));
+        // Y al revés: los códigos que el servicio emite (panel/CLI) deben ser
+        // válidos en `POST /v1/pair`. El registro canónico vive en SyncState.
+        self.admin.lock().unwrap().set_sync_channel(state.clone());
 
         let listen: std::net::SocketAddr = self
             .config

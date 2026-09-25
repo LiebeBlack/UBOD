@@ -244,6 +244,11 @@ pub struct AdminService {
     /// Destrucciones pendientes en ventana de gracia: vault_id -> ejecutar_después (epoch).
     pending_destructions: HashMap<String, u64>,
     session_ttl_secs: u64,
+    /// Canal de sincronización, si está abierto. El registro canónico de
+    /// códigos de emparejamiento vive en `SyncState` (es lo que consume
+    /// `POST /v1/pair`): sin este enlace, un código emitido aquí sería
+    /// válido para la auditoría pero desconocido para el canal.
+    sync: Option<std::sync::Arc<vault_sync::server::SyncState>>,
 }
 
 impl AdminService {
@@ -258,6 +263,7 @@ impl AdminService {
             sessions: HashMap::new(),
             pending_destructions: HashMap::new(),
             session_ttl_secs: 15 * 60,
+            sync: None,
         }
     }
 
@@ -701,10 +707,21 @@ impl AdminService {
     /// La autenticación del actor es responsabilidad de la capa que llama
     /// (panel web con sesión, CLI local…).
     pub fn new_pairing_code(&mut self) -> Result<String, AdminError> {
-        let mut b = [0u8; 4];
-        getrandom::getrandom(&mut b)
-            .map_err(|e| AdminError::Io(std::io::Error::other(e.to_string())))?;
-        let code: String = b.iter().map(|x| format!("{x:02X}")).collect();
+        // El código debe conocerlo TAMBIÉN el canal: `POST /v1/pair` consume
+        // el registro de un solo uso de `SyncState`, no esta base de datos.
+        // Emitirlo aquí sin registrarlo en el canal hacía imposible emparejar
+        // con los códigos del panel (regresión detectada por el E2E de
+        // máquina única). Sin canal abierto (uso local/sin sync) se genera
+        // uno igualmente válido para la auditoría.
+        let code = match &self.sync {
+            Some(sync) => sync.new_pairing_code(),
+            None => {
+                let mut b = [0u8; 4];
+                getrandom::getrandom(&mut b)
+                    .map_err(|e| AdminError::Io(std::io::Error::other(e.to_string())))?;
+                b.iter().map(|x| format!("{x:02X}")).collect()
+            }
+        };
         self.db.append_audit(
             "admin",
             "pairing_code",
@@ -713,6 +730,13 @@ impl AdminService {
         );
         self.db.flush()?;
         Ok(code)
+    }
+
+    /// Conecta el canal de sincronización para que los códigos de
+    /// emparejamiento que emite este servicio sean válidos en `/v1/pair`.
+    /// Lo llama el daemon justo después de crear el `SyncState`.
+    pub fn set_sync_channel(&mut self, sync: std::sync::Arc<vault_sync::server::SyncState>) {
+        self.sync = Some(sync);
     }
 
     /// Empareja un dispositivo manualmente (fingerprint conocido, sin código).

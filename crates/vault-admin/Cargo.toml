@@ -9,6 +9,10 @@ vault-crypto = { workspace = true }
 vault-store = { workspace = true }
 vault-fs = { workspace = true }
 vault-index = { workspace = true }
+# Canal de sincronización: el registro canónico de códigos de emparejamiento
+# vive en `SyncState` (los consume `POST /v1/pair`), así que el servicio de
+# administración debe poder emitirlos a través de él.
+vault-sync = { workspace = true }
 argon2 = { workspace = true }
 getrandom = { workspace = true }
 serde = { workspace = true }
