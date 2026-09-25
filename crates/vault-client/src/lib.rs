@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(env.header.protocol_version, "1.0");
         assert_eq!(env.payload.file_category, "Tesis");
         assert_eq!(env.payload.file_size_bytes, size);
-        assert_eq!(size, 17);
+        assert_eq!(size, 18);
         let digest = {
             use sha2::Digest;
             hex::encode(sha2::Sha256::digest(b"contenido de tesis"))
